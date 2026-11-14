@@ -1,0 +1,67 @@
+// [mod] Nouveaux supers : gel, ballon fou, aimant, tir double (voir notes/supers.md)
+// Types : 0 tir, 1 feinte, 2 vitesse, 3 mur (jeu d'origine), 4 gel, 5 ballon fou, 6 aimant, 7 tir double.
+// Durees en secondes de match. Relancer mods\build.ps1 apres modification.
+
+!SuperChance(i,f)
+!FreezeTime(f)
+!FreezeSpeed(f)
+!FreezeKeeper(i)
+!FreezeColor(f,f,f)
+!CrazyAmplitude(f)
+!CrazyFrequency(f)
+!CrazyAim(f)
+!CrazyTime(f)
+!MagnetTime(f)
+!MagnetRadius(f)
+!MagnetPull(f)
+!MagnetMinSpeed(f)
+!DoubleSpread(f)
+!DoubleFoolChance(f)
+!DoubleTime(f)
+
+// Tirage du super quand la jauge se remplit : poids relatifs (0 = jamais).
+// Jeu d'origine : 25 pour chacun des 4 premiers, 0 pour les nouveaux.
+SuperChance(0, 15)
+SuperChance(1, 15)
+SuperChance(2, 15)
+SuperChance(3, 15)
+SuperChance(4, 10)
+SuperChance(5, 10)
+SuperChance(6, 10)
+SuperChance(7, 10)
+
+// Gel : l'equipe adverse est ralentie.
+FreezeTime(5)
+// vitesse des joueurs geles (1 = normale)
+FreezeSpeed(0.5)
+// 1 = le gardien est gele aussi
+FreezeKeeper(1)
+// teinte des joueurs geles (rouge, vert, bleu ; 1,1,1 = aucune)
+FreezeColor(0.55, 0.75, 1.0)
+
+// Ballon fou : tir cadre qui zigzague, le gardien attend un tir droit.
+// amplitude du zigzag (ecart max a la ligne de tir), en fraction de la largeur des cages ; se resserre a l arrivee
+CrazyAmplitude(0.4)
+// allers-retours par seconde (2 virages secs chacun)
+CrazyFrequency(2.5)
+// ecart de visee au hasard autour du centre des cages, en fraction de leur largeur
+CrazyAim(0.25)
+// duree maximale du zigzag
+CrazyTime(3)
+
+// Aimant : les ballons libres (ou touches en dernier par l'adversaire) filent vers le joueur le plus proche.
+MagnetTime(6)
+// portee de l'attraction
+MagnetRadius(700)
+// force (plus grand = virage plus serre)
+MagnetPull(6)
+// vitesse minimale d'un ballon attire
+MagnetMinSpeed(600)
+
+// Tir double : le vrai ballon d'un cote, un leurre de l'autre.
+// ecart de chaque ballon au centre des cages, en fraction de leur largeur
+DoubleSpread(0.3)
+// chance (%) que le gardien plonge vers le leurre
+DoubleFoolChance(50)
+// duree de vie maximale du leurre
+DoubleTime(2.5)

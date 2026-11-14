@@ -1,0 +1,91 @@
+// [mod] Niveaux de difficulte 8..10 (voir notes/difficulty.md)
+// Options > Match > Niveau : Expert = 8, Maitre = 9, Legende = 10 (code LB8 / LB9 / LB0 en match).
+// Les niveaux 8..10 partent des valeurs du niveau 7 (ai_params.scr) ; chaque ligne ci-dessous les remplace.
+// Une ligne pour un niveau 1..7 remplace aussi la valeur d'ai_params.scr (facultatif).
+// Format : Parametre_level(niveau, valeur). Relancer mods\build.ps1 apres modification.
+
+!AttackInteria_level(i,f)
+!FreeBallInteria_level(i,f)
+!BallTakenInteria_level(i,f)
+!FeintChance_level(i,f)
+!FeintChance_AI_level(i,f)
+!SuperUpgradeTime_level(i,f)
+!PassChoiceCoef_level(i,f)
+!ValidPosDeviation_level(i,f)
+!ShotOpportunity_level(i,f)
+!MaxShotDeviation_level(i,f)
+!GKNoticeTime_level(i,f)
+!AIShotDeviation_level(i,f)
+!AISpeedMul_level(i,f)
+!AIShotPowerMul_level(i,f)
+!Marking_level(i,f)
+!MarkDistance_level(i,f)
+
+// Delai avant que l'IA presse le porteur du ballon (plus petit = plus agressif). Niveau 7 : 0.45
+AttackInteria_level(8, 0.35)
+AttackInteria_level(9, 0.25)
+AttackInteria_level(10, 0.15)
+
+// Reaction de l'IA sur un ballon libre (plus petit = plus rapide). Niveau 7 : 0.25
+FreeBallInteria_level(8, 0.2)
+FreeBallInteria_level(9, 0.15)
+FreeBallInteria_level(10, 0.1)
+
+// Temps de reaction de l'IA apres une perte de balle. Niveau 7 : 0.6
+BallTakenInteria_level(8, 0.5)
+BallTakenInteria_level(9, 0.4)
+BallTakenInteria_level(10, 0.3)
+
+// Reussite (%) des feintes du joueur humain. Niveau 7 : 40
+FeintChance_level(8, 35)
+FeintChance_level(9, 30)
+FeintChance_level(10, 25)
+
+// Reussite (%) des feintes de l'IA contre le joueur. Niveau 7 : 70
+FeintChance_AI_level(8, 75)
+FeintChance_AI_level(9, 80)
+FeintChance_AI_level(10, 85)
+
+// Qualite du choix des passes de l'IA. Niveau 7 : 1.2
+PassChoiceCoef_level(8, 1.4)
+PassChoiceCoef_level(9, 1.6)
+PassChoiceCoef_level(10, 1.8)
+
+// Imprecision du placement de l'IA (plus petit = mieux placee). Niveau 7 : 150
+ValidPosDeviation_level(8, 120)
+ValidPosDeviation_level(9, 100)
+ValidPosDeviation_level(10, 80)
+
+// Seuil de decision de tir de l'IA (plus petit = tire plus souvent). Niveau 7 : 0.6
+ShotOpportunity_level(8, 0.55)
+ShotOpportunity_level(9, 0.5)
+ShotOpportunity_level(10, 0.45)
+
+// Non modifies (= niveau 7) : SuperUpgradeTime, MaxShotDeviation (tirs du joueur), GKNoticeTime (gardien du joueur)
+
+// --- Bonus reserves a l'IA (1.0 = jeu d'origine, valeur par defaut des niveaux 1..7) ---
+
+// Ecart gauche-droite des tirs de l'IA (plus petit = plus precise)
+AIShotDeviation_level(8, 0.7)
+AIShotDeviation_level(9, 0.55)
+AIShotDeviation_level(10, 0.4)
+
+// Marquage des joueurs libres par l'equipe IA (0 = jeu d'origine, 1 = marquage serre), voir roles.scr.
+// Multiplie la valeur Marking du role (schema ORIGINE : les defenseurs de l'IA comptent pour 1). Niveaux 1..4 : 0.
+Marking_level(5, 0.3)
+Marking_level(6, 0.45)
+Marking_level(7, 0.6)
+Marking_level(8, 0.75)
+Marking_level(9, 0.9)
+Marking_level(10, 1.0)
+
+// Distance entre le marqueur IA et son adversaire, cote but (plus petit = plus colle). Defaut : 150
+MarkDistance_level(5, 220)
+MarkDistance_level(6, 200)
+MarkDistance_level(7, 180)
+MarkDistance_level(8, 150)
+MarkDistance_level(9, 130)
+MarkDistance_level(10, 110)
+
+// Vitesse et puissance des tirs de l'IA : desactivees (1.0), la difficulte doit venir du comportement, pas des stats.
+// Pour les remettre : AISpeedMul_level(10, 1.15) / AIShotPowerMul_level(10, 1.15)

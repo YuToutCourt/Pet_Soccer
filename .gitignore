@@ -1,0 +1,17 @@
+﻿# Binaires du jeu et outils (non versionnés)
+*.iso
+game_pristine/
+game_dev/
+game_dev_b/
+tools/
+build/
+# Sources décompilées : régénérables depuis code.pak
+decompiled/
+# Caches Python (scripts de mods/ et server/)
+__pycache__/
+# Comptes et Elo en ligne du serveur (créé au premier lancement de server.py)
+server/*.db
+graphify-out/
+online.dat
+crash.log
+graph.json

@@ -1,0 +1,61 @@
+// [mod] Classement Elo des profils (voir notes/elo.md)
+// Compte les matchs contre l'IA : match rapide, championnat, extras. Pas la demo ni le multijoueur.
+// L'Elo de chaque profil est enregistre dans elo.dat (dossier du jeu, fichier texte).
+// Relancer mods\build.ps1 apres modification.
+
+!Start(i)
+!K(f)
+!Placement(i,f)
+!AbandonIsLoss(i)
+!AIElo(i,i)
+!RankedOffset(i)
+!Rank(i,f,f,f)
+!RankBadge(i,s)
+
+// Elo d'un nouveau profil
+Start(1000)
+
+// Points en jeu par match (plus grand = classement qui bouge plus vite)
+K(32)
+
+// Matchs de placement : les N premiers matchs utilisent un K plus grand
+Placement(10, 48)
+
+// Quitter ou recommencer un match en cours = defaite (1) ou rien (0)
+AbandonIsLoss(1)
+
+// Elo de l'IA selon le niveau de difficulte (1..10). Battre une IA bien plus faible rapporte peu.
+AIElo(1, 600)
+AIElo(2, 750)
+AIElo(3, 900)
+AIElo(4, 1050)
+AIElo(5, 1200)
+AIElo(6, 1350)
+AIElo(7, 1500)
+AIElo(8, 1650)
+AIElo(9, 1800)
+AIElo(10, 2000)
+
+// Reglage de difficulte "Classe" (Options > Match) : l'IA prend le niveau dont l'Elo ci-dessus
+// est le plus proche de celui du joueur, plus ce decalage (ex. 100 = IA un peu plus forte que toi).
+RankedOffset(0)
+
+// Rangs, du plus bas au plus haut : Rank(Elo minimum, couleur R, V, B)
+// Les noms sont dans texts.scr (EloRank0, EloRank1, ...), dans le meme ordre.
+Rank(0, 0.65, 0.45, 0.25)
+Rank(900, 0.80, 0.50, 0.20)
+Rank(1100, 0.80, 0.82, 0.86)
+Rank(1300, 1.00, 0.84, 0.00)
+Rank(1500, 0.45, 0.90, 0.85)
+Rank(1700, 0.55, 0.75, 1.00)
+Rank(1900, 1.00, 0.35, 0.90)
+
+// Badge de chaque rang (128x128, PNG transparent) : RankBadge(numero du rang, fichier)
+// Genere par mods/art/make_rank_logos.py. Sans ligne pour un rang, pas de badge.
+RankBadge(0, "data/menu/logos/T_Rank_Bois.png")
+RankBadge(1, "data/menu/logos/T_Rank_Bronze.png")
+RankBadge(2, "data/menu/logos/T_Rank_Argent.png")
+RankBadge(3, "data/menu/logos/T_Rank_Or.png")
+RankBadge(4, "data/menu/logos/T_Rank_Platine.png")
+RankBadge(5, "data/menu/logos/T_Rank_Diamant.png")
+RankBadge(6, "data/menu/logos/T_Rank_Challenger.png")

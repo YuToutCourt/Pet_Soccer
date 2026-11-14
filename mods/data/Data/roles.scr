@@ -1,0 +1,276 @@
+// [mod] Roles des joueurs et schemas de jeu (voir notes/tactics.md)
+// Positions en fractions du terrain : profondeur 0 = son propre but, 1 = but adverse ; largeur 0 = axe, 1 = ligne de touche.
+// Position sans ballon = Depth + Follow x (profondeur du ballon - 0.5) (+ Push si l'equipe a le ballon), bornee par MinDepth / MaxDepth.
+// Relancer mods\build.ps1 apres modification.
+
+!Role(s,s)               // id, cle du nom dans texts.scr
+!Engine(i)               // type moteur : 0 attaquant, 1 defenseur (influence quelques decisions d'origine)
+!Depth(f)                // profondeur de base
+!Follow(f)               // part du deplacement du ballon suivie en profondeur (0 = reste sur sa ligne, 1 = suit le ballon)
+!Push(f)                 // montee supplementaire quand l'equipe a le ballon
+!MinDepth(f)
+!MaxDepth(f)
+!Width(f)                // ecart au centre ; plusieurs joueurs du meme role se repartissent de -Width a +Width
+!Side(i)                 // 1 = seul de son role, il reste sur le cote de son point de depart (sinon dans l'axe)
+!FollowX(f)              // part du deplacement lateral du ballon suivie
+!Marking(f)              // 0 = defense de zone, 1 = marquage serre (multiplie par Marking_level de difficulty.scr pour l'IA)
+!MarkRange(f)            // rayon de recherche d'un adversaire a marquer (fraction de la longueur du terrain)
+!Cover(i)                // 1 = reste toujours entre son but et l'attaquant adverse le plus avance
+!Free(f)                 // quand l'equipe a le ballon : rayon du demarquage autour de sa place (fraction de la longueur, 0 = aucun)
+!Runs(f)                 // envie de faire des appels en profondeur dans le dos de la defense (0..1)
+!GiveGo(f)               // chance de repartir en une-deux apres une passe courte (0..1)
+!Drop(f)                 // decrochage vers le porteur quand il est loin derriere (0..1)
+!Scheme(s,s,s,s,s,s,s,s) // id, cle du nom, 6 roles (ORIGINE = placement du jeu d'origine)
+!TeamScheme(i,s)         // schema d'une equipe IA (numero d'animal, voir EAnimals)
+!AIScheme(s)             // schema des equipes IA sans TeamScheme
+!HumanScheme(s)          // schema par defaut de l'equipe du joueur (avant tout choix dans le menu Tactique)
+!HumanMarking(f)         // force du marquage des coequipiers du joueur (multiplie Marking du role)
+!HumanMarkDistance(f)    // distance de marquage des coequipiers du joueur
+!DebugLog(i)             // 1 = ecrit roles, positions et marquages dans crash.log toutes les 2 s
+!Offside(i)              // 1 = hors-jeu doux : sans ballon, personne ne reste derriere l'avant-dernier adversaire
+!OffsideMargin(f)        // recul sous la ligne de hors-jeu (fraction de la longueur)
+!OffsideTolerance(f)     // au-dela de la ligne + tolerance, l'IA ne fait plus la passe a ce joueur
+!LongPassStart(f)        // distance (unites du jeu, terrain ~5800 de long) a partir de laquelle une passe perd en precision
+!LongPassError(f)        // ecart du point d'arrivee = LongPassError x (distance - LongPassStart), tire entre 50 et 100 pourcent
+!LongPassMaxError(f)     // ecart maximal
+!Movement(i)             // 1 = demarquage, appels, une-deux et passes dans la course (les deux equipes, aussi en ORIGINE)
+!PassToBest(i)           // 1 = l'IA passe au coequipier le mieux place (le jeu d'origine prenait le moins bien place)
+!FreeRefresh(f)          // secondes entre deux choix de place de demarquage
+!FreeKeep(f)             // garde sa place sauf si une autre est meilleure d'au moins cette note
+!RunCheck(f)             // secondes entre deux tests d'appel par joueur
+!RunChance(f)            // chance d'appel a chaque test = Runs du role x RunChance
+!RunFrom(f)              // un appel part d'au plus cette distance derriere la ligne de hors-jeu
+!RunDuration(f)          // duree maximale d'un appel (secondes), sinon selon la distance a courir
+!RunDepth(f)             // l'appel vise la ligne de hors-jeu + RunDepth (fraction de la longueur)
+!RunPassWindow(f)        // pendant ce temps apres le depart de l'appel, le coureur compte comme en jeu
+!RunCooldown(f)          // repos d'un joueur entre deux appels (secondes)
+!MaxRunners(i)           // appels en profondeur simultanes par equipe
+!RunSpeed(f)             // vitesse de course pour viser la passe (0 = FBSpeed d'ai_params.scr)
+!ThroughLead(f)          // avance maximale du ballon devant le coureur (unites du jeu)
+!ThroughMargin(f)        // un adversaire qui arriverait plus de ThroughMargin s avant le coureur annule la passe dans la course
+!ThroughTurn(f)          // retard (secondes) d'un adversaire qui doit courir vers son propre but pour couper la passe
+!KickDelay(f)            // temps de la frappe ajoute au trajet du ballon
+!AIThroughChance(f)      // chance qu'un porteur IA serve un coureur, tous les 0,3 s
+!GiveGoMaxDist(f)        // passe plus longue que ca : pas de une-deux
+!GiveGoDuration(f)       // duree de la course du une-deux
+!OriginAttacker(f,f,f,f) // Free, Runs, GiveGo, Drop des attaquants du schema ORIGINE
+!OriginDefender(f,f,f,f) // idem pour ses defenseurs
+
+// Dernier defenseur, dans l'axe, ne laisse jamais un attaquant dans son dos
+Role("LIBERO", "RoleLibero")
+{
+   Engine(1)
+   Depth(0.15)
+   Follow(0.35)
+   Push(0.05)
+   MinDepth(0.04)
+   MaxDepth(0.4)
+   Width(0.0)
+   Side(0)
+   FollowX(0.25)
+   Marking(0.0)
+   MarkRange(0.15)
+   Cover(1)
+   Free(0.03)
+   Runs(0.0)
+   GiveGo(0.0)
+   Drop(0.0)
+}
+
+// Marqueur individuel : colle l'attaquant le plus dangereux de sa zone
+Role("STOPPEUR", "RoleStopper")
+{
+   Engine(1)
+   Depth(0.22)
+   Follow(0.4)
+   Push(0.05)
+   MinDepth(0.06)
+   MaxDepth(0.5)
+   Width(0.3)
+   Side(0)
+   FollowX(0.2)
+   Marking(1.0)
+   MarkRange(0.3)
+   Cover(0)
+   Free(0.03)
+   Runs(0.0)
+   GiveGo(0.0)
+   Drop(0.0)
+}
+
+// Defenseur de zone, marque les joueurs libres qui entrent dans sa zone
+Role("DEFENSEUR", "RoleDefender")
+{
+   Engine(1)
+   Depth(0.22)
+   Follow(0.45)
+   Push(0.1)
+   MinDepth(0.06)
+   MaxDepth(0.5)
+   Width(0.35)
+   Side(0)
+   FollowX(0.15)
+   Marking(0.7)
+   MarkRange(0.2)
+   Cover(0)
+   Free(0.04)
+   Runs(0.0)
+   GiveGo(0.1)
+   Drop(0.0)
+}
+
+// Defenseur de cote qui monte quand l'equipe a le ballon
+Role("LATERAL", "RoleWingBack")
+{
+   Engine(1)
+   Depth(0.3)
+   Follow(0.6)
+   Push(0.25)
+   MinDepth(0.08)
+   MaxDepth(0.8)
+   Width(0.75)
+   Side(1)
+   FollowX(0.1)
+   Marking(0.6)
+   MarkRange(0.2)
+   Cover(0)
+   Free(0.06)
+   Runs(0.0)
+   GiveGo(0.4)
+   Drop(0.0)
+}
+
+// Fait le lien : redescend defendre, remonte attaquer
+Role("MILIEU", "RoleMidfielder")
+{
+   Engine(0)
+   Depth(0.45)
+   Follow(0.7)
+   Push(0.15)
+   MinDepth(0.15)
+   MaxDepth(0.8)
+   Width(0.3)
+   Side(0)
+   FollowX(0.25)
+   Marking(0.5)
+   MarkRange(0.2)
+   Cover(0)
+   Free(0.08)
+   Runs(0.2)
+   GiveGo(0.6)
+   Drop(0.2)
+}
+
+// Attaquant de cote, reste large pour ecarter le jeu
+Role("AILIER", "RoleWinger")
+{
+   Engine(0)
+   Depth(0.6)
+   Follow(0.6)
+   Push(0.2)
+   MinDepth(0.3)
+   MaxDepth(0.92)
+   Width(0.7)
+   Side(1)
+   FollowX(0.1)
+   Marking(0.2)
+   MarkRange(0.15)
+   Cover(0)
+   Free(0.06)
+   Runs(0.7)
+   GiveGo(0.4)
+   Drop(0.0)
+}
+
+// Attaquant classique
+Role("ATTAQUANT", "RoleForward")
+{
+   Engine(0)
+   Depth(0.62)
+   Follow(0.6)
+   Push(0.2)
+   MinDepth(0.38)
+   MaxDepth(0.9)
+   Width(0.5)
+   Side(0)
+   FollowX(0.2)
+   Marking(0.0)
+   MarkRange(0.15)
+   Cover(0)
+   Free(0.07)
+   Runs(1.0)
+   GiveGo(0.4)
+   Drop(0.1)
+}
+
+// Avant-centre : reste haut dans l'axe et attend le ballon
+Role("PIVOT", "RoleTarget")
+{
+   Engine(0)
+   Depth(0.72)
+   Follow(0.5)
+   Push(0.15)
+   MinDepth(0.5)
+   MaxDepth(0.92)
+   Width(0.0)
+   Side(0)
+   FollowX(0.25)
+   Marking(0.0)
+   MarkRange(0.15)
+   Cover(0)
+   Free(0.06)
+   Runs(0.3)
+   GiveGo(0.3)
+   Drop(0.5)
+}
+
+// Schemas proposes dans le menu Tactique (l'ordre des roles n'a pas d'importance :
+// le role le plus defensif va au joueur qui demarre le plus pres de son but)
+Scheme("ORIGINE", "SchemeOrigin", "", "", "", "", "", "")
+Scheme("EQUILIBRE", "SchemeBalanced", "DEFENSEUR", "DEFENSEUR", "MILIEU", "MILIEU", "ATTAQUANT", "ATTAQUANT")
+Scheme("BETON", "SchemeLock", "LIBERO", "STOPPEUR", "DEFENSEUR", "DEFENSEUR", "MILIEU", "PIVOT")
+Scheme("CONTRE", "SchemeCounter", "LIBERO", "DEFENSEUR", "DEFENSEUR", "MILIEU", "AILIER", "AILIER")
+Scheme("INDIVIDUEL", "SchemeManMark", "STOPPEUR", "STOPPEUR", "STOPPEUR", "MILIEU", "ATTAQUANT", "ATTAQUANT")
+Scheme("ATTAQUE", "SchemeAllOut", "DEFENSEUR", "MILIEU", "MILIEU", "AILIER", "AILIER", "PIVOT")
+
+AIScheme("ORIGINE")
+HumanScheme("ORIGINE")
+HumanMarking(1.0)
+HumanMarkDistance(150)
+DebugLog(0)
+
+// Hors-jeu doux (pas de coup de sifflet) : la ligne est l'avant-dernier adversaire, gardien compris,
+// jamais en deca du ballon ni de la ligne mediane. Vaut pour les deux equipes et pour le schema ORIGINE.
+Offside(1)
+OffsideMargin(0.02)
+OffsideTolerance(0.01)
+
+// Passes longues en jeu courant (pas les remises en jeu ni le gardien) : 1200 = environ un cinquieme du terrain
+LongPassStart(1200)
+LongPassError(0.25)
+LongPassMaxError(450)
+
+// Deplacements quand l'equipe a le ballon (les deux equipes, aussi en ORIGINE) : demarquage, appels en profondeur,
+// une-deux ; une passe (touche S ou IA) vers un joueur en plein appel part dans sa course.
+Movement(1)
+PassToBest(1)
+FreeRefresh(0.35)
+FreeKeep(0.12)
+RunCheck(0.4)
+RunChance(0.5)
+RunFrom(0.25)
+RunDuration(3.5)
+RunDepth(0.14)
+RunPassWindow(1.0)
+RunCooldown(3.0)
+MaxRunners(1)
+RunSpeed(0)
+ThroughLead(900)
+ThroughMargin(0.1)
+ThroughTurn(0.5)
+KickDelay(0.25)
+AIThroughChance(0.6)
+GiveGoMaxDist(1200)
+GiveGoDuration(1.6)
+OriginAttacker(0.07, 0.6, 0.4, 0.2)
+OriginDefender(0.04, 0.0, 0.0, 0.0)

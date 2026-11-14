@@ -1,0 +1,24 @@
+// [mod] Multijoueur en ligne (voir notes/online.md)
+// Relancer mods\build.ps1 apres modification.
+
+!Server(s,i)
+!TeammateLevel(i)
+!RankedHalf(i)
+!HalfBreak(i)
+!Direct(i)
+
+// adresse (nom ou IP) et port UDP du serveur de salons (server\server.py)
+Server("127.0.0.1", 7777)
+
+// niveau de l'IA des coequipiers pendant un match en ligne (1..10), le meme chez tous les joueurs
+TeammateLevel(5)
+
+// duree d'une mi-temps en partie classee, en minutes (1..10), la meme chez tous les joueurs
+RankedHalf(4)
+
+// pause a la mi-temps d'un match en ligne, en secondes (0 = pas de limite) : le temps de revoir sa tactique.
+// Le match reprend avant si les deux joueurs cliquent sur continuer. C'est le reglage de l'hote qui compte.
+HalfBreak(30)
+
+// liaison directe entre les deux jeux quand c'est possible (1), ou tout par le serveur (0)
+Direct(1)

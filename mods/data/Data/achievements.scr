@@ -1,0 +1,86 @@
+// [mod] Succes (voir notes/achievements.md)
+// Les succes se calculent a partir de l'historique des matchs (stats.dat) et de l'Elo :
+// ils comptent les memes matchs (humain contre l'IA, hors demo et multijoueur), sauf ceux joues avec une triche du menu Mods.
+// Un abandon compte comme une defaite (il casse les series).
+// Deblocages enregistres par profil dans achievements.dat (dossier du jeu). Relancer mods\build.ps1 apres modification.
+//
+// Achievement(cle, condition, seuil) : nom et description dans texts.scr (Ach_<cle> et Ach_<cle>_Desc).
+// La cle sert aussi dans achievements.dat : la changer fait perdre le deblocage.
+// L'ordre des lignes est celui de l'ecran Succes (12 par page).
+//
+// Conditions sur un seul match (meilleure valeur de l'historique) :
+//   WinLevel         victoire au niveau de difficulte >= seuil (1..10 ; 8 Expert, 9 Maitre, 10 Legende)
+//   CleanSheetLevel  victoire sans encaisser au niveau >= seuil
+//   MatchGoals       buts marques dans un match
+//   Margin           ecart de buts d'une victoire
+//   HatTrick         buts d'un meme joueur dans un match
+//   Comeback         victoire apres avoir ete mene d'au moins <seuil> buts
+//   GoldenGoal       victoire au but en or (seuil 1)
+//   LateWinner       but de la victoire marque a la <seuil>e minute ou plus tard
+//   Possession       possession (%) dans une victoire
+//   Passes           passes reussies dans un match
+//   Saves            arrets du gardien dans un match
+//   Supers           supers utilises dans un match
+// Conditions sur tout l'historique :
+//   Matches, Wins, Goals, CleanSheets (victoires sans encaisser), ExtraWins (victoires sur les terrains bonus)
+//   WinStreak        victoires d'affilee
+//   Unbeaten         matchs d'affilee sans defaite
+//   TeamsWon         equipes differentes avec lesquelles on a gagne
+//   TeamsBeaten      equipes differentes battues
+//   SuperTypes       types de supers differents utilises (8 avec les nouveaux)
+//   Cups             coupes differentes gagnees (7 au total)
+//   Rank             meilleur rang Elo atteint (0 Bois .. 6 Challenger, ordre de elo.scr)
+//   SurvivalWaves    manches reussies dans une meme serie de survie (record)
+
+!Achievement(s,s,i)
+!Sound(s)
+
+// son joue quand le bandeau de fin de match apparait (vide = aucun)
+Sound("data/sounds/super_inc")
+
+// premiers pas
+Achievement("first_match", "Matches", 1)
+Achievement("first_win", "Wins", 1)
+Achievement("clean_sheet", "CleanSheetLevel", 1)
+Achievement("hat_trick", "HatTrick", 3)
+Achievement("comeback", "Comeback", 1)
+Achievement("golden_goal", "GoldenGoal", 1)
+Achievement("late_winner", "LateWinner", 85)
+Achievement("cup", "Cups", 1)
+Achievement("rank_gold", "Rank", 3)
+Achievement("streak5", "WinStreak", 5)
+Achievement("goals100", "Goals", 100)
+Achievement("wins25", "Wins", 25)
+
+// exploits sur un match
+Achievement("poker", "HatTrick", 4)
+Achievement("festival", "MatchGoals", 6)
+Achievement("thrashing", "Margin", 5)
+Achievement("remontada", "Comeback", 3)
+Achievement("possession", "Possession", 65)
+Achievement("tiki_taka", "Passes", 70)
+Achievement("keeper", "Saves", 5)
+Achievement("super_hero", "Supers", 5)
+Achievement("expert", "WinLevel", 8)
+Achievement("master", "WinLevel", 9)
+Achievement("legend", "WinLevel", 10)
+Achievement("legend_wall", "CleanSheetLevel", 10)
+
+// carriere
+Achievement("streak10", "WinStreak", 10)
+Achievement("unbeaten20", "Unbeaten", 20)
+Achievement("wins100", "Wins", 100)
+Achievement("goals500", "Goals", 500)
+Achievement("clean20", "CleanSheets", 20)
+Achievement("extra10", "ExtraWins", 10)
+Achievement("collector", "SuperTypes", 8)
+Achievement("all_teams", "TeamsWon", 14)
+Achievement("hunter", "TeamsBeaten", 14)
+Achievement("all_cups", "Cups", 7)
+Achievement("rank_diamond", "Rank", 5)
+Achievement("challenger", "Rank", 6)
+
+// survie
+Achievement("survivor", "SurvivalWaves", 5)
+Achievement("unbreakable", "SurvivalWaves", 10)
+Achievement("immortal", "SurvivalWaves", 15)

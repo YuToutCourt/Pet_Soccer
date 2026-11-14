@@ -1,0 +1,61 @@
+﻿MOD DE PET SOCCER
+=================
+
+Ce dossier contient le mod, pas le jeu : il te faut Pet Soccer (Techland, 2002) déjà installé sur ton PC.
+
+
+INSTALLER
+---------
+
+1. Ferme Pet Soccer s'il est ouvert.
+2. Décompresse tout le zip dans un dossier (ne lance pas Installer.bat depuis l'aperçu du zip).
+3. Double-clique sur Installer.bat.
+   - Il cherche le dossier du jeu. S'il ne le trouve pas, il te le demande.
+   - Si le jeu est dans « Program Files », Windows demande les droits d'administrateur : accepte.
+   - S'il demande l'adresse du serveur, tape celle que t'a donnée celui qui héberge les parties.
+4. Lance le jeu comme d'habitude.
+
+Windows peut afficher « Windows a protégé votre ordinateur » au double-clic : clique sur
+« Informations complémentaires » puis « Exécuter quand même ». Le script est lisible : ouvre
+install.ps1 avec le Bloc-notes pour voir ce qu'il fait.
+
+Pour une nouvelle version du mod : refais la même chose avec le nouveau zip. Tes sauvegardes et
+l'adresse du serveur sont gardées.
+
+
+JOUER EN LIGNE
+--------------
+
+Menu principal, bouton « en ligne ». La première ligne dit si le serveur répond.
+
+- Entre amis : l'un clique « créer » et donne le code de 4 lettres à l'autre, qui le tape et clique
+  « rejoindre ». Chacun choisit son équipe et sa tactique, l'invité clique « prêt », l'hôte « jouer ».
+- Partie rapide : match classé contre un joueur d'Elo proche. Plus tu attends, plus l'écart d'Elo
+  accepté grandit. Les deux joueurs cliquent « prêt » et le match part. Quitter un match en cours
+  compte comme une défaite ; quitter le salon avant le match ne coûte rien.
+- À la mi-temps : 30 secondes pour revoir ta tactique. Le match reprend avant si vous cliquez tous
+  les deux sur « continuer ».
+
+Tu n'as aucun port à ouvrir sur ta box. Tout le monde doit avoir la même version du mod.
+
+Ton compte en ligne est le fichier online.dat, créé dans le dossier du jeu à ta première visite de
+l'écran « en ligne ». Ne le donne à personne (qui l'a joue sous ton nom) et garde-le si tu
+réinstalles le jeu : sans lui tu repars à 1000 Elo.
+
+
+CHANGER L'ADRESSE DU SERVEUR
+----------------------------
+
+Relance Installer.bat depuis une invite de commandes avec l'adresse :
+
+    Installer.bat -Server nouvelle.adresse
+
+ou ouvre Data\online.scr (dans le dossier du jeu) avec le Bloc-notes et change la ligne
+Server("adresse", 7777).
+
+
+RETIRER LE MOD
+--------------
+
+Double-clique sur Desinstaller.bat : les fichiers d'origine du jeu sont remis (ils étaient gardés
+dans le dossier mod_backup du jeu) et ceux du mod sont supprimés. Tes sauvegardes restent en place.

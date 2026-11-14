@@ -1,0 +1,39 @@
+// Mode Ligue (mod, bouton "ligue") - lu par ModLeagueMode a la premiere ligue, sans recompiler. Voir notes/league.md.
+// Format : ligue en aller simple (toutes les equipes), puis playoffs a double elimination pour les premiers.
+//
+// Qualifiers(n)         equipes qualifiees pour les playoffs : 2, 4 ou 8 (arrondi a la puissance de 2 inferieure)
+// GrandFinalReset(0|1)  1 : si le vainqueur du tableau des perdants gagne la grande finale, revanche (match decisif)
+// Points(v, n)          points pour une victoire, un nul
+//
+// Matchs IA contre IA (simules) :
+// GoalsPerMinute(f)     buts attendus par equipe et par minute de jeu entre deux equipes egales
+//                       (0.2 -> 1.6 but par equipe en 2 x 4 min)
+// HomeBonus(f)          bonus de buts de l'equipe qui recoit (0.1 = +10 %)
+// StrengthEffect(f)     effet d'un point de note d'ecart sur les buts attendus (0.08 = +8 % par point)
+// Form(f)               forme du tournoi : chaque equipe gagne ou perd jusqu'a f points de note au hasard
+// RatingWeights(a,b,c)  note = moyenne de Force, Precision, Reflexe (team_stats.scr) ponderee par a, b, c
+// Rating("Animal", f)   note imposee pour une equipe (remplace le calcul)
+//
+// Les nouveaux reglages s'appliquent a la prochaine ligue (sauf les buts / domicile / ecart : tout de suite).
+
+!Qualifiers(i)
+!GrandFinalReset(i)
+!Points(i,i)
+!GoalsPerMinute(f)
+!HomeBonus(f)
+!StrengthEffect(f)
+!Form(f)
+!RatingWeights(f,f,f)
+!Rating(s,f)
+
+Qualifiers(8)
+GrandFinalReset(0)
+Points(3, 1)
+
+GoalsPerMinute(0.2)
+HomeBonus(0.1)
+StrengthEffect(0.08)
+Form(2.0)
+RatingWeights(1.0, 1.0, 1.0)
+
+// Exemple : Rating("Tiger", 94.0)

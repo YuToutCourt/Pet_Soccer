@@ -1,0 +1,31 @@
+// Stats des equipes (mod) - lu par ETeams au demarrage, sans recompiler.
+// Team("Animal", Force, Precision, Reflexe)   90 = valeur neutre
+//   Force     -> puissance des tirs
+//   Precision -> ecart gauche-droite des tirs (plus haut = plus precis ; la hauteur ne change pas)
+//   Reflexe   -> vitesse de deplacement (gardien compris)
+// Barres du menu : 100 = 5 points, 95 = 4, 90 = 3, 85 = 2, 80 = 1 (plus de 100 = barre pleine).
+//
+// Effects(a, b, c) : effet en % par point d'ecart a 90
+//   a = puissance des tirs, b = dispersion, c = vitesse.
+//   Ex. Force 100 avec a=1 -> tirs 10 % plus forts ; Precision 80 avec b=3 -> 30 % de dispersion en plus.
+
+!Team(s,i,i,i)
+!Effects(f,f,f)
+
+Effects(1.0, 3.0, 0.5)
+
+//    Animal       Force  Precision  Reflexe
+Team("Bear",        90,     90,       90)
+Team("Bull",       100,     90,       80)
+Team("Chicken",     80,     90,      100)
+Team("Dino",        95,     85,       90)
+Team("Frog",        85,     85,      100)
+Team("Giraffe",     95,     95,       80)
+Team("Gorilla",     90,     90,       90)
+Team("Lion",        90,    100,       80)
+Team("Panther",     90,    100,       80)
+Team("Shark",       90,     85,       90)
+Team("Turtle",      90,    100,       80)
+Team("Robo",        80,     95,       95)
+Team("Panda",      100,     85,       85)
+Team("Tiger",       90,     90,      100)

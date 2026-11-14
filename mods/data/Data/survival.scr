@@ -1,0 +1,32 @@
+// [mod] Mode Survie (voir notes/survival.md)
+// Des matchs enchaines tant qu'on ne perd pas. Chaque manche reussie fait monter l'IA d'un niveau,
+// puis, une fois le niveau max atteint, l'IA gagne en vitesse et en puissance de tir a chaque manche.
+// Relancer mods\build.ps1 apres modification.
+
+!StartLevel(i)
+!MaxLevel(i)
+!WavesPerLevel(i)
+!SpeedPerWave(f)
+!ShotPowerPerWave(f)
+!MaxSpeedMul(f)
+!MaxShotPowerMul(f)
+!GoldenGoal(i)
+!Rated(i)
+
+// niveau de l'IA a la premiere manche (1..10), niveau max (10 = Legende)
+StartLevel(1)
+MaxLevel(10)
+// manches a reussir pour monter d'un niveau
+WavesPerLevel(1)
+
+// au-dela du niveau max, chaque manche ajoute ce bonus a la vitesse et a la puissance de tir de l'IA (0.03 = +3 %)
+SpeedPerWave(0.03)
+ShotPowerPerWave(0.04)
+// plafonds (1.5 = +50 %)
+MaxSpeedMul(1.5)
+MaxShotPowerMul(1.6)
+
+// 1 : une egalite a la fin du temps se joue au but en or ; 0 : une egalite fait passer la manche
+GoldenGoal(1)
+// 1 : les manches comptent pour l'Elo (tant que l'IA n'a pas de bonus) ; 0 : survie non classee
+Rated(0)
