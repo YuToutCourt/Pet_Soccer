@@ -269,8 +269,8 @@ python mods\installer\test_installer.py                                        #
 - `Desinstaller.bat` remet le dossier du jeu exactement comme avant (vérifié par le test), sauvegardes à part.
 - Il prévient si le `code.pak` de l'ami n'est pas celui de ta version du jeu (autre édition) : le mod est compilé
   contre celle-ci.
-- **Sur ton PC, n'essaie pas `Installer.bat` sur ton installation d'origine** : il la trouve par le registre
-  (`C:\Jeux\Pet Soccer`). Réponds « n » et choisis une copie, ou passe `-Game`.
+- **Sur ton PC, n'essaie pas `Installer.bat` sur ton installation d'origine** : il la trouve par le registre.
+  Réponds « n » et choisis une copie, ou passe `-Game`.
 - Tous les joueurs doivent avoir la même version du mod (`_MOD_VERSION`) : redonne le zip après chaque changement
   des règles ou des paquets.
 
