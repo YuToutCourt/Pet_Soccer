@@ -9,6 +9,12 @@ Snapshot rea : `build/rea/ChromeEngine.snapshot`.
 lit `game.ini` (`JavaGameClassName`), appelle `InitializeGameScript`.
 `start.exe` = autorun du CD (lien gspsoftware), inutile pour jouer. Aucune protection détectée.
 
+**Bug du lanceur** : `PetSoccer.exe` fait `sprintf(buf[1024], "PATH=%s;%sjre\bin\classic", getenv("PATH"), dossier)`
+puis `putenv` et `WinExec("<dossier>PetSoccer.bum")`. Avec un `PATH` Windows long, le tampon déborde et le lanceur
+plante sans message (`0xC0000005` à l'offset `0x1ADA`, dans `sprintf`) : le jeu ne démarre pas et aucun journal n'est
+écrit. Reproduit ici avec un `PATH` de 6 600 caractères. Correctif d'un octet (offset fichier `0x904D`) : `%s;` → `%.s`,
+le jeu ne reçoit plus que son `jre\bin\classic`. Script : `mods\diagnostic\Corriger-lanceur.bat`.
+
 ## Démarrage de la JVM — `FUN_100a62a0`
 - Tente d'ouvrir `code.pak`.
   - présent → `-Djava.class.path=code.pak`
