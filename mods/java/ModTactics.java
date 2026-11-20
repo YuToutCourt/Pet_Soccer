@@ -226,6 +226,8 @@ class ModTactics {
             m_fHumanMarkDistance = key.GetFParam(0);
          } else if (key.Equals("DebugLog")) {
             m_bDebugLog = key.GetIParam(0) != 0;
+         } else if (key.Equals("KickoffTest")) {
+            ModKickoff.m_nTest = key.GetIParam(0);
          } else if (key.Equals("Offside")) {
             m_bOffside = key.GetIParam(0) != 0;
          } else if (key.Equals("OffsideMargin")) {
@@ -719,6 +721,68 @@ class ModTactics {
       }
 
       return XToL(SpawnX(a)) < XToL(SpawnX(b));
+   }
+
+   // [mod] ModSwitch : joueurs de champ rangés par numéro de la carte tactique (case k = joueur k + 2).
+   // Place connue (ApplyTeam) d'abord ; sinon (composition ORIGINE, client en ligne) même ordre que ApplyTeam,
+   // par points d'apparition. null si l'équipe n'a pas exactement _SLOTS joueurs de champ.
+   static AIFootBaller[] GetNumbered(Team cTeam) {
+      if (cTeam == null || cTeam.m_vFootBallers == null) {
+         return null;
+      }
+
+      AIFootBaller[] tFB = new AIFootBaller[_SLOTS];
+      int nField = 0;
+      boolean bSlots = true;
+
+      for (int i = 0; i < cTeam.m_vFootBallers.size(); i++) {
+         AIFootBaller cFB = (AIFootBaller)cTeam.m_vFootBallers.elementAt(i);
+         if (cFB == null || cFB.IsGoalKeeper() || cFB.IsReferee()) {
+            continue;
+         }
+
+         if (nField >= _SLOTS || cFB.cSpawnPoint == null) {
+            return null;
+         }
+
+         tFB[nField++] = cFB;
+         PlayerInfo info = (PlayerInfo)m_tPlayers.get(cFB);
+         if (info == null || info.m_nSlot < 0 || info.m_nSlot >= _SLOTS) {
+            bSlots = false;
+         }
+      }
+
+      if (nField != _SLOTS) {
+         return null;
+      }
+
+      if (bSlots) {
+         AIFootBaller[] tBySlot = new AIFootBaller[_SLOTS];
+
+         for (int i = 0; i < _SLOTS; i++) {
+            tBySlot[((PlayerInfo)m_tPlayers.get(tFB[i])).m_nSlot] = tFB[i];
+         }
+
+         boolean bFull = true;
+
+         for (int i = 0; i < _SLOTS; i++) {
+            bFull &= tBySlot[i] != null;
+         }
+
+         if (bFull) {
+            return tBySlot;
+         }
+      }
+
+      for (int i = 1; i < _SLOTS; i++) {
+         for (int j = i; j > 0 && SlotBefore(tFB[j], tFB[j - 1]); j--) {
+            AIFootBaller tmp = tFB[j];
+            tFB[j] = tFB[j - 1];
+            tFB[j - 1] = tmp;
+         }
+      }
+
+      return tFB;
    }
 
    private static void ApplyTeam(Team cTeam, Composition c) {

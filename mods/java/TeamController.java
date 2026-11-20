@@ -12,6 +12,7 @@ public class TeamController extends GameObject {
    AITeam m_cTeam = null;
    InputAction[] m_Actions = new InputAction[InputAction._ACTIONS_NUM];
    boolean m_bRemote = false; // [mod] en ligne : manette pilotée par le réseau, sourde au clavier local
+   int m_nKeySet = -1; // [mod] jeu de touches (0 = joueur 1, 1 = joueur 2), pour les touches directes de ModSwitch
 
    // [mod] en ligne : la manette devient un clavier virtuel dont les touches (codes ModNet._ACT_KEYS,
    // hors de la plage des vraies touches) arrivent par Inject()
@@ -94,6 +95,9 @@ public class TeamController extends GameObject {
       }
 
       nButton += (nJoy + 1) * 1000;
+      if (ModSwitch.OnKey(this, nButton, bState)) { // [mod] touches directes vers un joueur
+         return;
+      }
 
       for (int i = 0; i < InputAction._ACTIONS_NUM; i++) {
          if (this.m_Actions[i] != null) {
@@ -141,6 +145,11 @@ public class TeamController extends GameObject {
          return;
       }
 
+      // [mod] touches directes vers un joueur (avant le réseau : le client les envoie lui-même)
+      if (ModSwitch.OnKey(this, nKeyCode, bKeyState)) {
+         return;
+      }
+
       // [mod] en ligne : le client envoie ses touches à l'hôte au lieu de les jouer
       if (ModNet.OnLocalKey(this, nKeyCode, bKeyState)) {
          return;
@@ -155,6 +164,7 @@ public class TeamController extends GameObject {
 
    void Init(AITeam cTeam, KbSettings cKbSettings) {
       this.m_cTeam = cTeam;
+      this.m_nKeySet = cKbSettings == SoccerGame.GetKb0() ? 0 : (cKbSettings == SoccerGame.GetKb1() ? 1 : -1); // [mod]
       if (cKbSettings.m_Device == 0) {
          this.m_nDevice = 3;
       } else if (cKbSettings.m_JoyNumber == 0) {

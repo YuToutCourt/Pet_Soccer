@@ -11,6 +11,7 @@ Réglages globaux (pas par profil), enregistrés par OK dans `game_dev\mods.dat`
 | général | Tous les terrains bonus | extras débloqués (comme `L222`) | `Cheat.m_bAllExtras` |
 | général | Compteur FPS | affiché en match (comme `LF`) | `SoccerGame.m_bShowFPS` |
 | général | Debug (au redémarrage) | mode debug du jeu, pris en compte au lancement suivant | `ModOptions.m_bDebugNextRun` → `SoccerGame.m_bDebug` |
+| général | Numéros sur les joueurs | chiffres 1 à 6 (ceux des touches directes) au-dessus des têtes des joueurs humains (désactivé par défaut) | `ModSwitch.m_bShowNumbers` |
 | triche | Vitesse 100 / 110 / 125 / 150 / 200 % | vitesse des équipes humaines | `AIFootBaller.SetLocalSpeedStat` |
 | triche | Frappe 100 / 125 / 150 / 200 % | puissance de tir des équipes humaines | `ModDifficulty.GetShotPowerMul` |
 | triche | Super : aléatoire / tir / feinte / vitesse / mur | type de super imposé aux équipes humaines | `ModOptions.UpdateTeam` |
@@ -27,7 +28,8 @@ Historique : champ `triche` (18e valeur de `stats.dat`), « triche » dans la co
 Les déblocages, le FPS et le debug ne comptent pas comme triche.
 
 ## mods.dat
-Texte, `Clé=valeur` par ligne : `AllTeams`, `AllExtras`, `ShowFPS`, `Debug`, `Speed`, `ShotPower`, `InfiniteSupers`, `SuperType` (-1 aléatoire, 0..3).
+Texte, `Clé=valeur` par ligne : `AllTeams`, `AllExtras`, `ShowFPS`, `Debug`, `Speed`, `ShotPower`, `InfiniteSupers`, `SuperType` (-1 aléatoire, 0..3),
+`PlayerNumbers`, `SelKey<jeu>_<numéro>` (touches directes vers les joueurs 2 à 7, réglées dans Options > Commandes, voir tactics.md).
 - Lu par `ModOptions.Load` juste après `debugconf.scr` (`SoccerGame.OnPreInitialize`) : une clé présente dans `mods.dat` l'emporte.
   Sans `mods.dat`, les valeurs de `debugconf.scr` s'appliquent comme avant.
 - Les codes `L111`, `L222` et `LF` enregistrent aussi `mods.dat` (ils restent des raccourcis du menu).

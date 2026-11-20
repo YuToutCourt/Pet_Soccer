@@ -16,6 +16,10 @@ public class AITeam extends Team {
    AIFootBaller m_cHelpAttacker = null;
    AIFootBaller m_cHelpBallAttacker = null;
    AIFootBaller m_cSelDestTracker = null;
+   // [mod] ModSwitch : fin du verrou après un changement manuel, joueur qu'on vient de quitter
+   float m_fSwitchLockEnd = -1.0F;
+   AIFootBaller m_cSwitchLeft = null;
+   float m_fSwitchLeftTime = -1.0F;
    static int PROFILE_UpdateGameInTeam0 = 0;
    static int PROFILE_UpdateGameInTeam1 = 0;
 
@@ -496,6 +500,15 @@ public class AITeam extends Team {
    }
 
    void ChangeActive() {
+      // [mod] équipes humaines : choix selon la direction tenue, puis tour des plus proches (ModSwitch)
+      if (super.m_bUserControled && AIMatch.IsMatchState(0)) {
+         AIFootBaller cPick = ModSwitch.Choose(this);
+         if (cPick != null) {
+            this.SwitchTo(cPick);
+            return;
+         }
+      }
+
       AIFootBaller cActive = (AIFootBaller)super.m_cActiveFootBaller;
       AIFootBaller cNearest;
       if (GameField.m_cBall.HasOwner()) {
@@ -536,6 +549,30 @@ public class AITeam extends Team {
       this.BlockControl(true);
       this.SetLastControlTime();
       this.m_bChangeControlToUserRequest = true;
+   }
+
+   // [mod] ModSwitch : le joueur humain prend cFB (touche passe sans ballon, ou touche directe), comme ChangeActive,
+   // puis verrou du changement automatique
+   void SwitchTo(AIFootBaller cFB) {
+      AIFootBaller cOldFocusFB = (AIFootBaller)super.m_cFocusFBaller;
+      AIFootBaller cActive = (AIFootBaller)this.SetActive(cFB);
+      if (cActive != null) {
+         this.SetFocus(cActive, false);
+      }
+
+      if (cOldFocusFB != null && cOldFocusFB != super.m_cFocusFBaller) {
+         this.m_cSwitchLeft = cOldFocusFB;
+         this.m_fSwitchLeftTime = ModSwitch.Now();
+         if (cOldFocusFB.HasEvent(1)) {
+            cOldFocusFB.ResetGoal();
+            cOldFocusFB.m_cDecContext.m_cEvent = null;
+         }
+      }
+
+      this.BlockControl(true);
+      this.SetLastControlTime();
+      this.m_bChangeControlToUserRequest = true;
+      ModSwitch.SetLock(this);
    }
 
    void ResetHelpBallAttacker() {
@@ -801,7 +838,9 @@ public class AITeam extends Team {
             this.m_bOldKeyState = super.m_cTeamController._KEY_STATES;
          }
 
-         if (this.m_fLastControlTime != -1.0F && SoccerGame.GetSoccerModule().GetTime() - this.m_fLastControlTime > super.m_cStrategy.m_fBlockControlTime) {
+         if (this.m_fLastControlTime != -1.0F
+            && SoccerGame.GetSoccerModule().GetTime() - this.m_fLastControlTime > super.m_cStrategy.m_fBlockControlTime
+            && ModSwitch.CanUnblock(this)) { // [mod] verrou après un changement manuel
             this.BlockControl(false);
             this.m_fLastControlTime = -1.0F;
          }
@@ -1029,7 +1068,7 @@ public class AITeam extends Team {
 
    // [mod] tirage pondéré des 8 supers (data/supers.scr)
    int GetRandomSuper() {
-      return ModSupers.GetRandomSuper();
+      return ModSupers.GetRandomSuper(this);
    }
 
    void CheckSupers() {

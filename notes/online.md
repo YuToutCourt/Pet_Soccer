@@ -351,7 +351,8 @@ python mods\installer\test_installer.py                                        #
 - Caméra : copie de celle de l'hôte (`SoccerCamera.OnPostUpdate` → `ModNet.ClientCamera`). Les deux joueurs
   voient la même image, comme en multi local.
 - Touches : la manette de l'équipe de gauche (réglages du joueur 1) capte les touches et les envoie au lieu de
-  les jouer (`ModNet.OnLocalKey`). Clavier seulement pour l'instant.
+  les jouer (`ModNet.OnLocalKey`). Clavier seulement pour l'instant. Les touches directes vers un joueur (2 à 7,
+  `ModSwitch`) partent avant ce crochet, en actions `_ACT_SEL + k` (11..16) jouées par `ModNet.HostApplyKey`.
 - Le client ne joue que les effets, sons, appels du HUD et commentaires venus de l'hôte : les crochets renvoient
   faux hors de `m_bApplying`.
 - Menu du match : il suit celui de l'hôte (pause, mi-temps, fin). « Continuer » et échap sont des demandes à
@@ -442,7 +443,7 @@ ont sinon le même nom de profil.
 - `NetDirect(0)` : pas de liaison directe, quoi que dise `online.scr`. `NetDirect(2)` : elle casse après 20 s.
 - `NetNoSkip(1)` : les jeux automatiques laissent la pause de mi-temps aller au bout.
 - `NetTeam(équipe, tenue)` : équipe prise dans le salon.
-- `NetBot(1)` côté client : il joue tout seul (directions qui tournent, passes, tirs, supers, espace,
+- `NetBot(1)` côté client : il joue tout seul (directions qui tournent, passes, tirs, supers, touches directes vers un joueur, espace,
   « continuer » à la mi-temps). À la mi-temps il envoie aussi un autre schéma à l'hôte, comme un invité qui
   revoit sa tactique.
 - `NetBot(1)` côté hôte : une passe toutes les 2 s, pour qu'un arrêt de jeu de son équipe ne bloque pas un test

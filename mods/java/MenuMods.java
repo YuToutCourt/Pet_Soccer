@@ -32,6 +32,7 @@ public class MenuMods extends SoccerUserInterface {
       this.GetCheck("ID_ALLEXTRAS_CHECK").SetCheck(Cheat.m_bAllExtras);
       this.GetCheck("ID_FPS_CHECK").SetCheck(SoccerGame.m_bShowFPS);
       this.GetCheck("ID_DEBUG_CHECK").SetCheck(ModOptions.m_bDebugNextRun);
+      this.GetCheck("ID_NUMBERS_CHECK").SetCheck(ModSwitch.m_bShowNumbers);
       this.GetCheck("ID_SUPERS_CHECK").SetCheck(ModOptions.m_bInfiniteSupers);
       this.m_nSpeed = Math.max(0, ModOptions.Find(ModOptions._SPEEDS, ModOptions.m_nSpeed));
       this.m_nShotPower = Math.max(0, ModOptions.Find(ModOptions._SHOT_POWERS, ModOptions.m_nShotPower));
@@ -80,6 +81,7 @@ public class MenuMods extends SoccerUserInterface {
       Cheat.m_bAllExtras = this.GetCheck("ID_ALLEXTRAS_CHECK").GetCheck();
       SoccerGame.m_bShowFPS = this.GetCheck("ID_FPS_CHECK").GetCheck();
       ModOptions.m_bDebugNextRun = this.GetCheck("ID_DEBUG_CHECK").GetCheck();
+      ModSwitch.m_bShowNumbers = this.GetCheck("ID_NUMBERS_CHECK").GetCheck();
       ModOptions.m_bInfiniteSupers = this.GetCheck("ID_SUPERS_CHECK").GetCheck();
       ModOptions.m_nSpeed = ModOptions._SPEEDS[this.m_nSpeed];
       ModOptions.m_nShotPower = ModOptions._SHOT_POWERS[this.m_nShotPower];

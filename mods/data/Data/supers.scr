@@ -18,6 +18,11 @@
 !DoubleSpread(f)
 !DoubleFoolChance(f)
 !DoubleTime(f)
+!FillTime(f)
+
+// Remplissage de la jauge : secondes de possession par lettre (5 lettres = 1 super).
+// Jeu d'origine : 6 (30 s pour un super). 0 = garder la valeur du jeu. Vaut pour les deux equipes.
+FillTime(10)
 
 // Tirage du super quand la jauge se remplit : poids relatifs (0 = jamais).
 // Jeu d'origine : 25 pour chacun des 4 premiers, 0 pour les nouveaux.

@@ -127,6 +127,7 @@ public class AIMatch extends Match {
       super.Update();
       String ctr = " state " + m_nMatchState + " waiting " + this.m_bWaiting + " started " + m_bStateStarted;
       if (super.m_bInited) {
+         ModKickoff.Update(this); // [mod] traces et test du coup d'envoi
          Match.m_cModule.ProfileBegin(PROFILE_UpdateParams);
          ((AITeam)super.m_teams[0]).UpdateParams();
          ((AITeam)super.m_teams[1]).UpdateParams();

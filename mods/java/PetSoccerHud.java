@@ -18,6 +18,8 @@ public class PetSoccerHud extends SoccerUserInterface {
       if (CoreLogic.m_bMultiplayer) {
          this.UpdateArrow(SoccerModule.m_cMatch.GetTeam(nPlayer2Team));
       }
+
+      ModSwitch.UpdateNumbers(this); // [mod] numéros au-dessus des joueurs humains
    }
 
    void UpdateFBPosition(FootBaller cFB) {
@@ -107,6 +109,10 @@ public class PetSoccerHud extends SoccerUserInterface {
       // [mod] en ligne : l'hôte diffuse les appels du HUD, le client ne joue que ceux de l'hôte
       if (!ModNet.OnHud(ModNet._HUD_LETTERS, nCount, nSuperType, nTeam)) {
          return;
+      }
+
+      if (SoccerGame.m_bDebug) {
+         GameObject.CrashLog("[mod] HUD super : cote " + nTeam + ", " + nCount + " lettres, type " + nSuperType + "\n");
       }
 
       if (ModNet.SupersOn()) {

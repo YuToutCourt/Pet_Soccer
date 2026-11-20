@@ -15,7 +15,7 @@
 | `BallTakenInteria` | réaction après une perte de balle |
 | `FeintChance` | réussite des feintes **du joueur** |
 | `FeintChance_AI` | réussite des feintes **de l'IA** contre le joueur |
-| `SuperUpgradeTime` | recharge de la jauge SUPER (6 s partout) |
+| `SuperUpgradeTime` | recharge de la jauge SUPER (6 s partout ; remplacé ensuite par `FillTime` de `supers.scr`, 10 s, voir tactics.md) |
 | `PassChoiceCoef` | qualité du choix des passes |
 | `ValidPosDeviation` | imprécision du placement IA |
 | `ShotOpportunity` | seuil de décision de tir IA (plus bas = tire plus) |

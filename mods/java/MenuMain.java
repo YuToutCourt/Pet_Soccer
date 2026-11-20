@@ -373,11 +373,22 @@ public class MenuMain extends SoccerUserInterface {
          this.CallMethodIn("TacticsTest", 1.0F);
       }
 
+      // [mod] test de l'écran Contrôles sans souris : ControlsTest(1) dans debugconf.scr (voir notes/tactics.md)
+      if (ModSwitch.GetDebugTest()) {
+         this.CallMethodIn("ControlsTest", 1.0F);
+      }
+
       // [mod] test du salon sans souris : NetAuto dans debugconf.scr (une fois)
       if ((ModLobby.m_nAuto == 1 || ModLobby.m_nAuto == 2 || ModLobby.m_nAuto == 4) && !m_bOnlineTestDone) {
          m_bOnlineTestDone = true;
          this.CallMethodIn("OnlineTest", 1.0F);
       }
+   }
+
+   // [mod] ouvre l'écran Contrôles (ControlsTest)
+   void ControlsTest() {
+      this.DisableCallMethod("StartDemo");
+      ((SoccerMainMenuModule)this.GetModule()).ShowUI(7);
    }
 
    // [mod] ouvre l'écran Tactique (équipe 1 par défaut si aucune n'est choisie)

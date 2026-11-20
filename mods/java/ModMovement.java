@@ -468,7 +468,8 @@ class ModMovement {
          AIFootBaller cHolder = (AIFootBaller)cOwner;
          if (fNow >= s.m_fNextRunCheck || fNow < s.m_fNextRunCheck - 10.0F) {
             s.m_fNextRunCheck = fNow + m_fRunCheck * (0.75F + GameObject.RandomFloat(0.5F));
-            if (TryStartRun(cTeam, cFB, cHolder, s, fNow)) {
+            // le porteur IA peut le servir tout de suite (OnPass termine alors la course : m_vRun redevient null)
+            if (TryStartRun(cTeam, cFB, cHolder, s, fNow) && s.m_vRun != null) {
                return new Vector(s.m_vRun);
             }
          }

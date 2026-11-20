@@ -26,6 +26,7 @@
 !HumanScheme(s)          // schema par defaut de l'equipe du joueur (avant tout choix dans le menu Tactique)
 !HumanMarking(f)         // force du marquage des coequipiers du joueur (multiplie Marking du role)
 !HumanMarkDistance(f)    // distance de marquage des coequipiers du joueur
+!KickoffTest(i)          // tests : KickoffTest(8) relance un coup d'envoi toutes les 8 s (traces avec DebugLog(1))
 !DebugLog(i)             // 1 = ecrit roles, positions et marquages dans crash.log toutes les 2 s
 !Offside(i)              // 1 = hors-jeu doux : sans ballon, personne ne reste derriere l'avant-dernier adversaire
 !OffsideMargin(f)        // recul sous la ligne de hors-jeu (fraction de la longueur)

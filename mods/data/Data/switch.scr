@@ -1,0 +1,34 @@
+// [mod] Changement de joueur des equipes humaines (voir notes/tactics.md, "Changement de joueur").
+// Les touches directes (joueurs 2 a 7) se reglent dans Options > Controles (enregistrees dans mods.dat).
+// Relancer mods\build.ps1 apres modification.
+
+!SwitchCone(f)
+!SwitchLock(f)
+!SwitchNoBack(f)
+!NumberHeight(f)
+!NumberFocusExtra(f)
+!MapNumbers(i)
+!MapNumberGap(f)
+
+// Touche passe sans ballon : on prend le coequipier le plus proche du ballon.
+// Option : demi-angle (degres) autour de la direction des fleches tenues, pour choisir le plus proche
+// dans cette direction d'abord. 0 = desactive (le plus proche du ballon, fleches ou pas).
+SwitchCone(0)
+
+// Apres un changement manuel, le jeu ne change plus de joueur tout seul pendant ce temps (secondes).
+// Jeu d'origine : 0.4 apres le relachement des fleches (BlockControlTime d'ai_params.scr).
+SwitchLock(1.2)
+
+// On ne revient pas au joueur qu'on vient de quitter pendant ce temps (secondes) :
+// appuyer plusieurs fois passe au suivant le plus proche.
+SwitchNoBack(0.6)
+
+// Numeros des joueurs 2 a 7 sur la mini-carte (1 = oui), et ecart en pixels entre le point et le numero.
+MapNumbers(1)
+MapNumberGap(1)
+
+// Numeros au-dessus des joueurs : option du menu Mods (desactivee par defaut).
+// Hauteur des numeros affiches au-dessus des joueurs (unites du terrain ; un joueur mesure environ 90).
+NumberHeight(120)
+// En plus pour le joueur controle, pour passer au-dessus du losange du jeu d'origine.
+NumberFocusExtra(60)

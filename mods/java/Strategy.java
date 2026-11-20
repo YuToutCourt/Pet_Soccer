@@ -1299,6 +1299,15 @@ public class Strategy {
       }
 
       ModDifficulty.Apply(this, nLevel);
+      // [mod] jauge SUPER plus lente (data/supers.scr, FillTime), pour les deux équipes
+      ModSupers.Load();
+      if (ModSupers.m_fFillTime > 0.0F) {
+         this.m_fSuperUpgradeTime = ModSupers.m_fFillTime;
+      }
+
+      if (SoccerGame.m_bDebug) {
+         GameObject.CrashLog("[mod] jauge SUPER : " + this.m_fSuperUpgradeTime + " s de possession par lettre (niveau " + nLevel + ")\n");
+      }
    }
 
    void Load(ParseKeyword key) {

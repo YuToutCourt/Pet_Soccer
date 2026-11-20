@@ -390,7 +390,16 @@ public class AIFootBaller extends FootBaller {
          this.m_cKick.m_bLob = true;
       }
 
-      if (this.m_bSpecialFBDest != null) {
+      AIFootBaller cKickoffDest = SoccerModule.m_cMatch.m_cSpecialDestFB;
+      if (AIMatch.IsMatchState(7) && cKickoffDest != null && !this.IsUserControled()) {
+         // [mod] coup d'envoi de l'IA : dans les pieds du receveur, qui devient le destinataire de la passe (actif, va au ballon).
+         // Le jeu d'origine visait ChosePassPosition, un point à côté du receveur en direction de la touche : RealKick devait
+         // corriger la cible en état 7, mais GoalKick passe en état 0 juste avant RealKick, donc le ballon partait souvent en touche.
+         this.m_bSpecialFBDest = cKickoffDest;
+         this.m_cKick.m_vDestPos = cKickoffDest.GetPosition();
+         this.m_cKick.m_cPassDestFB = cKickoffDest;
+         GameField.SetDestPos(this.m_cKick.m_vDestPos, false);
+      } else if (this.m_bSpecialFBDest != null) {
          this.m_test_sDestFindWay = this.m_test_sDestFindWay + " m_bSpecialFBDest = " + this.m_bSpecialFBDest;
          Vector vPassDest = super.m_cStrategy.ChosePassPosition(this, this.m_bSpecialFBDest);
          this.m_test_vDestPos = vPassDest;
@@ -434,6 +443,7 @@ public class AIFootBaller extends FootBaller {
          this.m_test_sDestFindWay = this.m_test_sDestFindWay + " center pos ";
       }
 
+      ModKickoff.OnPass(this, this.m_bSpecialFBDest, this.m_cKick.m_vDestPos); // [mod] traces du coup d'envoi
       SoccerModule.m_cMatch.UnblockControlForFocus(this.m_cKick.m_vDestPos);
       this.RequestKickShowing("PassSpecialBall");
       this.SetKickMark();
@@ -1209,7 +1219,7 @@ public class AIFootBaller extends FootBaller {
    void OnInputKey(int nKeyCode, boolean bKeyState, char nKeyAscii) {
       super.OnInputKey(nKeyCode, bKeyState, nKeyAscii);
       if (SoccerGame.m_bDebug) {
-         if (!bKeyState) {
+         if (!bKeyState && !ModSwitch.IsSelectKey(nKeyCode)) { // [mod] touches directes : pas d'animation de debug
             switch (nKeyCode) {
                case 2:
                   if (this.IsUserControled()) {
@@ -2089,6 +2099,10 @@ public class AIFootBaller extends FootBaller {
       Team cTeam = super.m_cTeam;
       int nType = cTeam.m_nSuperType;
       int nCount = cTeam.m_nSuperCounter;
+      if (SoccerGame.m_bDebug) {
+         GameObject.CrashLog("[mod] UseSuper " + cTeam.m_sName + " (cote " + cTeam.m_nSide + ") : dispo " + cTeam.m_bSuperAvailable + ", type " + cTeam.m_nSuperType + ", lettres " + cTeam.m_nSuperFillCount + "\n");
+      }
+
       this.UseSuperType();
       if (cTeam.m_nSuperCounter > nCount) {
          ModStats.OnSuper(cTeam, nType);

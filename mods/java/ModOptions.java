@@ -67,6 +67,8 @@ class ModOptions {
          m_bInfiniteSupers = n != 0;
       } else if (sKey.equals("SuperType")) {
          m_nSuperType = n >= 0 && n < _SUPER_TYPES ? n : _SUPER_RANDOM;
+      } else {
+         ModSwitch.SetOption(sKey, n); // numéros des joueurs, touches directes
       }
    }
 
@@ -81,6 +83,7 @@ class ModOptions {
          out.write("ShotPower=" + m_nShotPower + "\r\n");
          out.write("InfiniteSupers=" + (m_bInfiniteSupers ? 1 : 0) + "\r\n");
          out.write("SuperType=" + m_nSuperType + "\r\n");
+         out.write(ModSwitch.SaveLines());
          out.close();
          GameObject.CrashLog("[mod] mods.dat enregistre : " + GetSummary() + "\n");
       } catch (Exception e) {
@@ -90,7 +93,8 @@ class ModOptions {
 
    static String GetSummary() {
       return "equipes " + Cheat.m_bAllTeams + ", extras " + Cheat.m_bAllExtras + ", fps " + SoccerGame.m_bShowFPS + ", debug " + m_bDebugNextRun
-         + ", vitesse " + m_nSpeed + "%, tir " + m_nShotPower + "%, supers infinis " + m_bInfiniteSupers + ", super " + m_nSuperType;
+         + ", vitesse " + m_nSpeed + "%, tir " + m_nShotPower + "%, supers infinis " + m_bInfiniteSupers + ", super " + m_nSuperType
+         + ", " + ModSwitch.GetSummary();
    }
 
    static int Find(int[] tValues, int n) {

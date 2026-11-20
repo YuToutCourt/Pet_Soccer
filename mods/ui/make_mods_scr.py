@@ -140,7 +140,8 @@ def build(res):
         check(src_check, "ID_ALLEXTRAS_CHECK", "&&ModsAllExtras&&", 0.08, 0.27),
         check(src_check, "ID_FPS_CHECK", "&&ModsFPS&&", 0.08, 0.38),
         check(src_check, "ID_DEBUG_CHECK", "&&ModsDebug&&", 0.08, 0.49),
-        static("ID_KEYS_INFO", "&&ModsKeysInfo&&", roman, MULTI, 0.08, 0.63, 0.36, 0.22),
+        check(src_check, "ID_NUMBERS_CHECK", "&&ModsPlayerNumbers&&", 0.08, 0.60),
+        static("ID_KEYS_INFO", "&&ModsKeysInfo&&", roman, MULTI, 0.08, 0.72, 0.36, 0.22),
     ]
 
     # cadre droit : triches de match

@@ -35,6 +35,8 @@ class ModSupers {
    static float m_fDoubleSpread = 0.3F;
    static float m_fDoubleFoolChance = 50.0F;
    static float m_fDoubleTime = 2.5F;
+   // secondes de possession par lettre de la jauge (Strategy.m_fSuperUpgradeTime) ; 0 = valeur du jeu (6)
+   static float m_fFillTime = 10.0F;
    // effets à durée, par côté (Team.m_nSide) : fin en temps de match, -1 = inactif
    static float[] m_fFreezeEnd = new float[]{-1.0F, -1.0F};
    static float[] m_fMagnetEnd = new float[]{-1.0F, -1.0F};
@@ -110,35 +112,74 @@ class ModSupers {
             m_fDoubleFoolChance = key.GetFParam(0);
          } else if (key.Equals("DoubleTime")) {
             m_fDoubleTime = key.GetFParam(0);
+         } else if (key.Equals("FillTime")) {
+            m_fFillTime = Math.max(0.0F, key.GetFParam(0));
          }
       }
 
-      GameObject.CrashLog("[mod] supers charges depuis " + _FILE + "\n");
+      GameObject.CrashLog("[mod] supers charges depuis " + _FILE + " (FillTime " + m_fFillTime + ")\n");
    }
 
-   // remplace Team.GetRandomSuper (AITeam) : tirage pondéré par SuperChance
-   static int GetRandomSuper() {
+   // tirage des supers : générateur à part, graine selon l'heure. Celui du jeu (GameObject.RandomFloat) part toujours
+   // de la graine 0, donc les mêmes supers revenaient d'un lancement à l'autre.
+   static java.util.Random m_cRandom = new java.util.Random(System.currentTimeMillis());
+
+   // remplace Team.GetRandomSuper (AITeam) : tirage pondéré par SuperChance, sans le super que l'autre équipe a en ce
+   // moment (les deux équipes avaient souvent le même), sauf s'il est le seul possible
+   static int GetRandomSuper(Team cTeam) {
       Load();
+      int nOther = -1;
+      if (cTeam != null && SoccerModule.m_cMatch != null) {
+         Team cOther = SoccerModule.m_cMatch.GetTeam(1 - (cTeam.m_nSide & 1));
+         if (cOther != null && cOther != cTeam) {
+            nOther = cOther.m_nSuperType;
+         }
+      }
+
       float fTotal = 0.0F;
 
       for (int i = 0; i < _TYPES; i++) {
-         fTotal += m_fChance[i];
+         if (i != nOther) {
+            fTotal += m_fChance[i];
+         }
+      }
+
+      if (fTotal <= 0.0F) {
+         nOther = -1;
+
+         for (int i = 0; i < _TYPES; i++) {
+            fTotal += m_fChance[i];
+         }
       }
 
       if (fTotal <= 0.0F) {
          return 0;
       }
 
-      float fRnd = GameObject.RandomFloat(fTotal);
+      float fRnd = m_cRandom.nextFloat() * fTotal;
+      int nType = -1;
+      int nLast = 0; // dernier possible, si l'arrondi fait dépasser la somme
 
       for (int i = 0; i < _TYPES; i++) {
-         fRnd -= m_fChance[i];
-         if (fRnd < 0.0F) {
-            return i;
+         if (i != nOther && m_fChance[i] > 0.0F) {
+            nLast = i;
+            fRnd -= m_fChance[i];
+            if (fRnd < 0.0F) {
+               nType = i;
+               break;
+            }
          }
       }
 
-      return _TYPES - 1;
+      if (nType < 0) {
+         nType = nLast;
+      }
+
+      if (SoccerGame.m_bDebug) {
+         GameObject.CrashLog("[mod] super tire pour " + (cTeam != null ? cTeam.m_sName : "?") + " : type " + nType + " (autre equipe : " + nOther + ")\n");
+      }
+
+      return nType;
    }
 
    static boolean IsModSuper(int nType) {

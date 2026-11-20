@@ -3,7 +3,7 @@
 !AllTeams(i)
 !AllExtras(i)
 
-Debug(1)
+Debug(0)
 ShowFPS(1)
 AllTeams(1)
 AllExtras(0)

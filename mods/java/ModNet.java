@@ -114,6 +114,8 @@ class ModNet {
    static final int _ACT_SPACE = 8; // espace : passer l'intro, un ralenti, lancer la mi-temps
    static final int _ACT_ESC = 9; // échap : ouvrir ou fermer le menu pause
    static final int _ACT_CONTINUE = 10; // bouton « continuer » du menu
+   // touches directes vers les joueurs 2..7 (ModSwitch) : _ACT_SEL + 0..5, jouées par l'hôte sur l'équipe de l'invité
+   static final int _ACT_SEL = 11;
 
    static int m_nRole = _ROLE_NONE;
    static String m_sHost = null;
@@ -1019,6 +1021,15 @@ class ModNet {
    }
 
    static void HostApplyKey(int nAction, boolean bState) {
+      if (nAction >= _ACT_SEL && nAction < _ACT_SEL + ModSwitch._NUMBERS) { // [mod] touche directe de l'invité
+         TeamController cRemote = HostRemoteController();
+         if (bState && cRemote != null && cRemote.m_cTeam != null && MatchReady()) {
+            ModSwitch.Select(cRemote.m_cTeam, nAction - _ACT_SEL + ModSwitch._FIRST_NUMBER);
+         }
+
+         return;
+      }
+
       if (nAction >= _ACT_SPACE) {
          if (bState) {
             HostRequest(nAction);
@@ -1727,6 +1738,16 @@ class ModNet {
       return true;
    }
 
+   // ModSwitch.OnKey : chez le client, une touche directe part à l'hôte. Renvoie vrai si elle est envoyée.
+   static boolean ClientSelect(int nIndex) {
+      if (m_nRole != _ROLE_CLIENT) {
+         return false;
+      }
+
+      ClientQueueKey(_ACT_SEL + nIndex, true);
+      return true;
+   }
+
    static void ClientQueueKey(int nAction, boolean bState) {
       m_nInputSeq++;
       m_tInput[m_nInputSeq % _INPUT_RING] = (byte)(nAction | (bState ? 0x80 : 0));
@@ -1766,6 +1787,11 @@ class ModNet {
       if (m_nBotStep % 11 == 3) {
          ClientQueueKey(_ACT_SUPER, true);
          ClientQueueKey(_ACT_SUPER, false);
+      }
+
+      // touche directe vers un joueur (ModSwitch), en faisant le tour des numéros 2..7
+      if (m_nBotStep % 7 == 4) {
+         ClientQueueKey(_ACT_SEL + m_nBotStep / 7 % ModSwitch._NUMBERS, true);
       }
 
       // espace seulement hors du jeu et des ralentis : le test doit voir les ralentis en entier
