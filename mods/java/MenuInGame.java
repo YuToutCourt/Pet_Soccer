@@ -257,8 +257,10 @@ public class MenuInGame extends SoccerUserInterface {
 
    public void Show() {
       Commentator comm = SoccerGame.game.GetCommentator();
-      comm.ClearCurrComment();
-      comm.StopTalking();
+      if (!ModNet.m_bLocalMenu) { // [mod] en ligne : le match continue derrière un menu local, le commentaire aussi
+         comm.ClearCurrComment();
+         comm.StopTalking();
+      }
       if (this.m_bMatchEnd) {
          this.m_cExit.SetText(Text.Get("&InGameOk&"));
       } else {

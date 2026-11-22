@@ -171,6 +171,7 @@ class ModNet {
    static float m_fSpeedUp = 1.0F; // dernier TimerSetSpeedUp (ralentis)
    static boolean m_bSaid = false; // le commentateur parle (pour n'envoyer qu'un seul « stop »)
    static boolean m_bWaitMenu = false; // menu ouvert par nous : en attente de l'adversaire
+   static boolean m_bLocalMenu = false; // menu ouvert par échap chez ce joueur seulement : le match continue
    static boolean m_bWaitShown = false; // ce menu a déjà été proposé depuis la dernière connexion
    static boolean m_bEverConnected = false;
    static int m_nLoggedMenu = 0;
@@ -218,6 +219,7 @@ class ModNet {
    static boolean m_bBotTactics = false; // le client automatique a déjà changé de schéma dans ce match
    static long m_lBotNext = 0L;
    static int m_nBotStep = 0;
+   static float m_fBotClock = 0.0F; // test du menu local de l'hôte : horloge à l'ouverture
    static int m_nBotDir = -1;
 
    // --- suivi ---
@@ -240,6 +242,12 @@ class ModNet {
 
    static boolean IsOnline() {
       return m_nRole != _ROLE_NONE;
+   }
+
+   // En ligne, l'équipe de ce jeu : celle de gauche au coup d'envoi pour l'hôte, de droite pour le client.
+   // Ne pas comparer le côté (GetTeam(n)) : les équipes changent de côté à la mi-temps.
+   static boolean IsMyTeam(Team cTeam) {
+      return cTeam != null && cTeam == m_tTeam[m_nRole == _ROLE_CLIENT ? 1 : 0];
    }
 
    // debugconf.scr : NetHost(port)
@@ -1065,16 +1073,14 @@ class ModNet {
          return;
       }
 
+      // Hors de la pause de mi-temps, l'échap du client n'ouvre que son menu à lui (OnEscape) : rien à faire ici.
+      // Le menu local de l'hôte ne compte pas : le match continue pour le client.
       if (nAction == _ACT_SPACE) {
-         if (!cModule.m_bMenuVisible) {
+         if (!cModule.m_bMenuVisible || m_bLocalMenu) {
             cModule.OnInputKey(57, true, ' ');
          }
-      } else if (nAction == _ACT_ESC) {
-         if (!cModule.m_bMatchEnd) {
-            cModule.OnInputKey(1, true, ' ');
-         }
       } else if (nAction == _ACT_CONTINUE) {
-         if (cModule.m_bMenuVisible && !cModule.m_bMatchEnd) {
+         if (cModule.m_bMenuVisible && !m_bLocalMenu && !cModule.m_bMatchEnd) {
             cModule.OnMenuContinue();
          }
       }
@@ -1092,7 +1098,8 @@ class ModNet {
 
    // Sans adversaire, l'hôte attend dans le menu du match (il peut choisir de continuer seul)
    static void HostWaitMenu(SoccerModule cModule) {
-      if (m_cPeer != null || m_bWaitShown || cModule.m_bMenuVisible || cModule.m_bMatchEnd || cModule.m_nFadeMode != 0) {
+      // un menu local ouvert est remplacé par celui d'attente (ShowMenu → OnShowMenu)
+      if (m_cPeer != null || m_bWaitShown || cModule.m_bMenuVisible && !m_bLocalMenu || cModule.m_bMatchEnd || cModule.m_nFadeMode != 0) {
          return;
       }
 
@@ -1109,10 +1116,71 @@ class ModNet {
    // SoccerModule.HideMenu
    static void OnMenuHidden() {
       m_bWaitMenu = false;
+      m_bLocalMenu = false;
+   }
+
+   // SoccerModule.OnEscape (et OnModuleKey chez le client). En ligne, échap ouvre ou ferme un menu chez ce
+   // joueur seulement, sans mettre le match en pause : l'autre continue de jouer. Renvoie vrai si la touche
+   // est prise ici.
+   static boolean OnEscape(SoccerModule cModule) {
+      if (m_nRole == _ROLE_NONE || cModule == null || cModule.m_cMenuInGameModule == null) {
+         return false;
+      }
+
+      if (m_bLocalMenu) {
+         cModule.m_cMenuInGameModule.m_cMenuYesNo.Hide();
+         cModule.HideMenu();
+         return true;
+      }
+
+      if (cModule.m_bMenuVisible) {
+         if (m_nRole == _ROLE_CLIENT) {
+            // pause de mi-temps : échap vaut « continuer », comme chez l'hôte
+            if (m_nShownMenu == 2 && !m_bHostLost) {
+               ClientQueueKey(_ACT_ESC, true);
+            }
+
+            return true;
+         }
+
+         return false; // hôte : mi-temps ou attente de l'adversaire, comme avant
+      }
+
+      if (!cModule.m_bMatchEnd && !GameField.m_cBall.IsSuperShot()) {
+         OpenLocalMenu(cModule);
+      }
+
+      return true;
+   }
+
+   // Le menu pause, sans ce que SoccerModule.ShowMenu y ajoute : ni arrêt de l'horloge, ni caméra figée
+   static void OpenLocalMenu(SoccerModule cModule) {
+      MenuInGame cMenu = cModule.m_cMenuInGameModule.m_cMenuInGame;
+      m_bLocalMenu = true;
+      cModule.m_bMenuVisible = true;
+      cMenu.m_bMatchEnd = false;
+      cMenu.m_bMatchHalfTime = false;
+      cModule.m_cMenuInGameModule.Activate();
+      Log("menu local ouvert, le match continue");
+   }
+
+   // SoccerModule.ShowMenu : un vrai menu (mi-temps, fin, attente) remplace le menu local
+   static void OnShowMenu(SoccerModule cModule) {
+      if (m_bLocalMenu && cModule.m_cMenuInGameModule != null) {
+         m_bLocalMenu = false;
+         cModule.m_cMenuInGameModule.m_cMenuYesNo.Hide();
+         cModule.m_cMenuInGameModule.Deactivate();
+      }
+   }
+
+   // TeamController.OnInputKey : menu local ouvert, les touches appuyées ne jouent pas (les relâchées passent,
+   // pour qu'une direction tenue au moment d'échap ne reste pas enfoncée)
+   static boolean IsKeyBlocked(boolean bKeyState) {
+      return bKeyState && m_bLocalMenu;
    }
 
    static int HostMenuState(SoccerModule cModule) {
-      if (!cModule.m_bMenuVisible || cModule.m_cMenuInGameModule == null) {
+      if (!cModule.m_bMenuVisible || m_bLocalMenu || cModule.m_cMenuInGameModule == null) {
          return 0;
       }
 
@@ -1703,18 +1771,18 @@ class ModNet {
       return true;
    }
 
-   // Crochet de SoccerModule.OnInputKey. Chez le client, espace et échap sont des demandes à l'hôte.
-   // Renvoie vrai si la touche est prise par le réseau.
+   // Crochet de SoccerModule.OnInputKey. Chez le client, espace est une demande à l'hôte, échap ouvre le menu
+   // local (OnEscape). Renvoie vrai si la touche est prise par le réseau.
    static boolean OnModuleKey(int nKeyCode, boolean bKeyState) {
       if (m_nRole != _ROLE_CLIENT) {
          return false;
       }
 
-      if (bKeyState && !m_bHostLost) {
-         if (nKeyCode == 57) {
+      if (bKeyState) {
+         if (nKeyCode == 1) {
+            OnEscape(SoccerGame.activeLevelModule);
+         } else if (nKeyCode == 57 && !m_bHostLost && !m_bLocalMenu) {
             ClientQueueKey(_ACT_SPACE, true);
-         } else if (nKeyCode == 1) {
-            ClientQueueKey(_ACT_ESC, true);
          }
       }
 
@@ -1723,6 +1791,10 @@ class ModNet {
 
    // Crochet de SoccerModule.OnMenuContinue. Renvoie vrai si c'est l'hôte qui fermera le menu.
    static boolean OnMenuContinue() {
+      if (m_bLocalMenu) {
+         return false; // menu local : il se ferme ici, l'autre joueur n'en sait rien
+      }
+
       if (m_nRole == _ROLE_HOST) {
          return HostHalfSkip(); // pause de mi-temps : le menu se fermera quand le client sera prêt aussi
       }
@@ -1795,8 +1867,13 @@ class ModNet {
       }
 
       // espace seulement hors du jeu et des ralentis : le test doit voir les ralentis en entier
-      if (m_nBotStep == 25) {
-         ClientQueueKey(_ACT_ESC, true); // une pause demandée par le client, refermée par « continuer »
+      // échap : le menu local du client, refermé par « continuer » ; le match de l'hôte ne doit pas s'arrêter
+      SoccerModule cModule = SoccerGame.activeLevelModule;
+      if (m_nBotStep == 25 && m_nShownMenu == 0) {
+         OnEscape(cModule);
+      } else if (m_bLocalMenu && m_nBotStep == 29 && cModule != null) {
+         cModule.OnMenuContinue();
+         Log("test : menu local du client referme");
       }
 
       // à la mi-temps, une fois : un autre schéma part chez l'hôte, comme un invité qui revoit sa tactique
@@ -1831,8 +1908,19 @@ class ModNet {
       }
 
       m_lBotNext = lNow + 2000L;
+      m_nBotStep++;
       if (!m_bNoSkip) {
          HostHalfSkip(); // à la mi-temps : « continuer »
+      }
+
+      // échap vers 16 s : le menu local de l'hôte, refermé 6 s plus tard ; l'horloge du match doit avancer
+      SoccerModule cModule = SoccerGame.activeLevelModule;
+      if (m_nBotStep == 8 && cModule != null && !cModule.m_bMenuVisible) {
+         m_fBotClock = cModule.m_Clock.GetMatchTimeF();
+         OnEscape(cModule);
+      } else if (m_nBotStep == 11 && m_bLocalMenu) {
+         Log("test : menu local de l'hote, horloge " + m_fBotClock + " -> " + cModule.m_Clock.GetMatchTimeF());
+         OnEscape(cModule);
       }
 
       TeamController cController = m_tTeam[0].GetTeamController();
@@ -2516,6 +2604,7 @@ class ModNet {
       Log("client : menu " + m_nShownMenu + " -> " + nState);
       m_nShownMenu = nState;
       if (cModule.m_bMenuVisible) {
+         m_bLocalMenu = false; // un menu local ouvert est remplacé par celui de l'hôte
          // fin de la pause de mi-temps avec l'écran Tactique ouvert : ce qui y est réglé part chez l'hôte
          cModule.m_cMenuInGameModule.m_cMenuTactics.CommitIfOpen();
          cModule.m_bMenuVisible = false;
@@ -2617,6 +2706,7 @@ class ModNet {
       m_fSpeedUp = 1.0F;
       m_bSaid = false;
       m_bWaitMenu = false;
+      m_bLocalMenu = false;
       m_bWaitShown = false;
       m_nLoggedMenu = 0;
       m_lHalfEnd = 0L;

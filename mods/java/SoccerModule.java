@@ -217,6 +217,7 @@ class SoccerModule extends Module {
    }
 
    void ShowMenu() {
+      ModNet.OnShowMenu(this); // [mod] en ligne : remplace un menu ouvert par échap chez ce joueur seulement
       this.m_bMenuVisible = true;
       this.m_cMenuInGameModule.m_cMenuInGame.m_bMatchEnd = this.m_bMatchEnd;
       this.m_cMenuInGameModule.m_cMenuInGame.m_bMatchHalfTime = this.m_bMatchHalfTime;
@@ -453,6 +454,11 @@ class SoccerModule extends Module {
    }
 
    void OnEscape() {
+      // [mod] en ligne : échap n'ouvre le menu que chez ce joueur, le match continue pour l'autre
+      if (ModNet.OnEscape(this)) {
+         return;
+      }
+
       if (!GameField.m_cBall.IsSuperShot()) {
          if (this.m_bMenuVisible) {
             // [mod] en ligne, pause de mi-temps : échap vaut « continuer », le menu attend l'autre joueur

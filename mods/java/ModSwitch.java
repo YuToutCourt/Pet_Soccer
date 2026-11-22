@@ -362,8 +362,9 @@ class ModSwitch {
          Team cTeam = cMatch != null ? cMatch.GetTeam(nSide) : null;
          boolean bTeam = cTeam != null && cTeam.m_bUserControled && !CoreLogic.m_bDemo && cHud.m_bVisible
             && (AIMatch.IsMatchState(0) || AIMatch.IsMatchState(7))
-            // en ligne, chacun ne voit que les numéros de son équipe : gauche pour l'hôte, droite pour le client
-            && (!ModNet.IsOnline() || nSide == (ModNet.IsClient() ? 1 : 0));
+            // en ligne, chacun ne voit que les numéros de son équipe (gauche au coup d'envoi pour l'hôte, droite pour
+            // le client), y compris après le changement de côté de la mi-temps
+            && (!ModNet.IsOnline() || ModNet.IsMyTeam(cTeam));
          AIFootBaller[] tFB = bTeam && (m_bShowNumbers || bMapOn) ? ModTactics.GetNumbered(cTeam) : null;
 
          for (int i = 0; i < _NUMBERS; i++) {

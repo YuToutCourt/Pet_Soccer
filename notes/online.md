@@ -244,7 +244,18 @@ de l'hôte) : le temps de revoir sa tactique.
 - `HalfBreak(0)` : pas de limite, le premier « continuer » ferme le menu, comme avant.
 - Le temps du match est arrêté pendant ce menu : le compte à rebours suit l'horloge du PC de l'hôte
   (`ModNet.HostHalfBreak`), envoyé au client dans l'état (secondes restantes, qui est prêt).
-- La pause demandée par échap en cours de match ne change pas : elle n'a pas de limite.
+- En cours de match, échap ne met plus en pause : voir « Échap en cours de match ».
+
+### Échap en cours de match
+
+- Échap ouvre le menu (continuer, quitter, et recommencer chez l'hôte) **chez ce joueur seulement** : le match
+  continue pour les deux (`ModNet.OnEscape`, `OpenLocalMenu`). Ni horloge arrêtée ni caméra figée, rien
+  d'envoyé à l'autre jeu (`HostMenuState` vaut 0 pendant ce menu).
+- Pendant ce menu, les touches appuyées ne jouent pas (`TeamController.OnInputKey` → `ModNet.IsKeyBlocked`) ;
+  les relâchées passent, pour qu'une direction tenue au moment d'échap ne reste pas enfoncée.
+- Échap ou « continuer » le referment. Un vrai menu (mi-temps, fin, attente de l'adversaire, menu de l'hôte
+  chez le client) le remplace (`ModNet.OnShowMenu`, `ClientMenu`).
+- Pendant la pause de mi-temps, échap vaut toujours « je suis prêt », des deux côtés.
 
 ## Installeur pour les amis (phase 5)
 
@@ -339,7 +350,8 @@ python mods\installer\test_installer.py                                        #
 - Client perdu (5 s sans paquet, ou « au revoir ») : toutes ses touches sont relâchées.
 - Sans adversaire, l'hôte ouvre le menu du match avec « En attente de l'adversaire » (ou « Adversaire
   déconnecté »). Le menu se ferme seul quand le client arrive. L'hôte peut aussi choisir « continuer ».
-- Espace, échap et « continuer » du client sont joués par le module de l'hôte (`ModNet.HostRequest`).
+- Espace et « continuer » du client sont joués par le module de l'hôte (`ModNet.HostRequest`), échap seulement
+  pendant la pause de mi-temps (« je suis prêt »).
 
 ## Côté client
 
@@ -355,8 +367,9 @@ python mods\installer\test_installer.py                                        #
   `ModSwitch`) partent avant ce crochet, en actions `_ACT_SEL + k` (11..16) jouées par `ModNet.HostApplyKey`.
 - Le client ne joue que les effets, sons, appels du HUD et commentaires venus de l'hôte : les crochets renvoient
   faux hors de `m_bApplying`.
-- Menu du match : il suit celui de l'hôte (pause, mi-temps, fin). « Continuer » et échap sont des demandes à
-  l'hôte. « Recommencer » est réservé à l'hôte. « Tactique » marche à la mi-temps dans un match de salon (voir
+- Menu du match : il suit celui de l'hôte (mi-temps, fin). Échap en cours de match ouvre un menu chez le client
+  seulement (voir « Échap en cours de match »). Dans un menu de l'hôte, « continuer » et échap sont des demandes
+  à l'hôte. « Recommencer » est réservé à l'hôte. « Tactique » marche à la mi-temps dans un match de salon (voir
   « Pause de mi-temps »). Les statistiques affichées sont celles de l'hôte.
 - Ralentis : ce sont ceux de l'hôte, reçus comme le reste (positions, animations, caméra, vitesse du temps).
 - Hôte perdu (5 s sans paquet, ou « au revoir ») : le menu s'ouvre avec « Connexion perdue », seul « quitter »
@@ -448,6 +461,8 @@ ont sinon le même nom de profil.
   revoit sa tactique.
 - `NetBot(1)` côté hôte : une passe toutes les 2 s, pour qu'un arrêt de jeu de son équipe ne bloque pas un test
   sans personne au clavier, et « continuer » à la mi-temps.
+- Avec `NetBot(1)`, chaque jeu ouvre une fois son menu par échap puis le referme (hôte vers 16 s, client vers
+  25 s). L'hôte écrit `test : menu local de l'hote, horloge a -> b` : b plus grand que a, le match a continué.
 - `NetHalf(n)` côté hôte : mi-temps de n secondes, pour un match de test court.
 - En mode debug, la ligne `[mod] net stat` de l'hôte donne aussi l'état du match, l'horloge et le dernier arrêt
   de jeu : c'est par là qu'on voit un match qui attend une touche.

@@ -145,6 +145,11 @@ public class TeamController extends GameObject {
          return;
       }
 
+      // [mod] en ligne, menu ouvert par échap chez ce joueur : le match continue, mais ses touches ne jouent pas
+      if (ModNet.IsKeyBlocked(bKeyState)) {
+         return;
+      }
+
       // [mod] touches directes vers un joueur (avant le réseau : le client les envoie lui-même)
       if (ModSwitch.OnKey(this, nKeyCode, bKeyState)) {
          return;

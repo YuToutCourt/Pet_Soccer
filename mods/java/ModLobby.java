@@ -1355,7 +1355,7 @@ class ModLobby {
             cModule.m_cMenuInGameModule.m_cMenuInGame.Quit();
             return;
          } else if (lNow >= m_lDebugQuit && !cModule.m_bMenuVisible) {
-            cModule.ShowMenu();
+            ModNet.OnEscape(cModule); // comme un joueur qui appuie sur échap : menu local, le match continue
          }
       }
 
