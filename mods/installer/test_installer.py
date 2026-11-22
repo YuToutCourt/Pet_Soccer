@@ -5,7 +5,10 @@
 """
 import filecmp
 import hashlib
+import json
 import os
+import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -86,6 +89,11 @@ saved = [f for f in ["code.pak", "code_inf.pak"] + replaced if sha(os.path.join(
 check("les %d fichiers d'origine remplacés sont gardés dans mod_backup" % len(saved), len(saved) == len(replaced) + 2)
 check("les sauvegardes du joueur ne sont pas touchées",
       all(sha(os.path.join(game, s)) == before[s] for s in ("settings.dat", "online.dat")))
+release = re.search(r'RELEASE\s*=\s*"([0-9.]+)"', open(os.path.join(root, "mods", "java", "ModVersion.java"), encoding="utf-8").read()).group(1)
+maj = os.path.join(game, "mod_maj")
+check("lanceur en place : Jouer.bat, mod_maj\\update.ps1 et mod.txt de la version %s" % release,
+      os.path.exists(os.path.join(game, "Jouer.bat")) and os.path.exists(os.path.join(maj, "update.ps1"))
+      and ("release=%s" % release) in open(os.path.join(maj, "mod.txt")).read())
 
 code, out = run()  # mise à jour : même paquet, sans redonner l'adresse
 check("mise à jour réussie", code == 0)
@@ -94,6 +102,46 @@ check("mise à jour : l'adresse du serveur déjà réglée est gardée", b'Serve
 check("mise à jour : mod_backup garde les originaux, pas les fichiers du mod",
       all(sha(os.path.join(backup, f)) == before[f] for f in ["code.pak", "code_inf.pak"] + replaced)
       and sorted(rel_files(backup)) == sorted(["code.pak", "code_inf.pak", "fichiers_du_mod.txt"] + replaced))
+
+# --- lanceur : mise à jour depuis une fausse release GitHub (fichiers locaux en file:///) ---
+asset = os.path.join(work, "PetSoccerMod-update.zip")
+shutil.copy2(pkg_zip, asset)
+feed = os.path.join(work, "latest.json")
+
+
+def fake_release(tag, digest):
+    json.dump({"tag_name": tag, "assets": [{"name": "PetSoccerMod-update.zip", "size": os.path.getsize(asset), "digest": digest,
+                                            "browser_download_url": pathlib.Path(asset).as_uri()}]}, open(feed, "w"))
+
+
+def launch():
+    cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", os.path.join(maj, "update.ps1"),
+           "-Api", pathlib.Path(feed).as_uri(), "-NoLaunch"]
+    res = subprocess.run(cmd, capture_output=True)
+    return res.returncode, res.stdout.decode("cp850", "replace") + res.stderr.decode("cp850", "replace")
+
+
+def installed_release():
+    return re.search(r"release=(\S+)", open(os.path.join(maj, "mod.txt")).read()).group(1)
+
+
+fake_release(release, "sha256:" + sha(asset))
+code, out = launch()
+check("lanceur : même version que la release, rien à faire", code == 0 and installed_release() == release and "jour." in out)
+
+open(os.path.join(maj, "mod.txt"), "w").write("release=0.1\n")  # une ancienne version installée
+fake_release(release, "sha256:" + "0" * 64)
+code, out = launch()
+check("lanceur : téléchargement abîmé (empreinte fausse) refusé, le jeu garde sa version",
+      code == 0 and installed_release() == "0.1" and "SHA-256" in out)
+
+fake_release("v" + release, "sha256:" + sha(asset))
+code, out = launch()
+print(out.strip())
+check("lanceur : nouvelle version téléchargée et installée", code == 0 and installed_release() == release)
+online = open(os.path.join(game, "Data", "online.scr"), "rb").read()
+check("lanceur : l'adresse du serveur et les sauvegardes sont gardées", b'Server("exemple.duckdns.org", 7780)' in online
+      and all(sha(os.path.join(game, s)) == before[s] for s in ("settings.dat", "online.dat")))
 
 code, out = run("-Uninstall")
 print(out.strip())

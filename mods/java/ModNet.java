@@ -16,7 +16,7 @@ class ModNet {
    static final int _MAGIC = 0x50534E31; // "PSN1"
    // Version du mod pour le jeu en ligne : à augmenter dès que les paquets ou les règles du match changent.
    // Le serveur ne met dans un même salon que deux jeux de même version.
-   static final int _MOD_VERSION = 6; // 6 : ligue en ligne (match entre amis, but en or en playoffs)
+   static final int _MOD_VERSION = 7; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client
    static final int _ROLE_NONE = 0;
    static final int _ROLE_HOST = 1;
    static final int _ROLE_CLIENT = 2;
@@ -195,6 +195,7 @@ class ModNet {
    static int m_nShownCam = -99;
    static float[] m_tCam = new float[6]; // caméra interpolée : position, direction
    static boolean m_bCamReady = false;
+   static boolean m_bCamFree = false; // la caméra de l'hôte suit sa cible : le client calcule la sienne
    static boolean m_bShownCamReplay = false;
    static int m_nShownHud = -1;
    static int m_nShownReplay = -1;
@@ -1237,7 +1238,11 @@ class ModNet {
       Vector vCamDir = cCam.GetForwardVector();
       vCamDir.Negate();
       PutVector(b, vCamDir);
-      b.put((byte)(cCam.m_bReplay ? 1 : 0));
+      // 1 : ralenti ; 2 : caméra libre (elle suit sa cible, sans ralenti, fin de mi-temps ni super tir) : le client
+      // calcule alors la sienne, avec son mode, son zoom et sa souris
+      boolean bCamFree = !cCam.m_bReplay && !cCam.m_bEndHalf && !cCam.m_bFreezed && cCam.bAutoUpdate && !cCam.m_bFirstUpdate
+         && cCam.m_Observed != null && !cBall.IsSuperShot();
+      b.put((byte)((cCam.m_bReplay ? 1 : 0) | (bCamFree ? 2 : 0)));
       int nCount0 = Math.min(m_tTeam[0].GetFootBallerCount(), 7);
       int nCount1 = Math.min(m_tTeam[1].GetFootBallerCount(), 7);
       b.put((byte)nCount0);
@@ -2010,7 +2015,9 @@ class ModNet {
          s.tCam[i] = b.getFloat();
       }
 
-      s.bCamReplay = b.get() != 0;
+      int nCamFlags = b.get();
+      s.bCamReplay = (nCamFlags & 1) != 0;
+      s.bCamFree = (nCamFlags & 2) != 0;
       s.nCount0 = Math.min(b.get() & 0xFF, 7);
       s.nCount1 = Math.min(b.get() & 0xFF, 7);
       int nObjects = s.nCount0 + s.nCount1 + 1;
@@ -2368,6 +2375,11 @@ class ModNet {
          cCam.SetFOV(m_bShownCamReplay ? cCam.m_fReplayFOV : cCam.m_fFOV);
       }
 
+      boolean bCamFree = (cB != null ? cB : cA).bCamFree;
+      if (bCamFree != m_bCamFree) {
+         m_bCamFree = bCamFree;
+         Log("client : camera " + (bCamFree ? "locale" : "de l'hote"));
+      }
       m_bCamReady = true;
       // Score, horloge et état du match : ceux de l'état le plus récent
       AIMatch.m_nMatchState = cNew.nMatchState;
@@ -2622,10 +2634,11 @@ class ModNet {
       }
    }
 
-   // Crochet de SoccerCamera.OnPostUpdate. Chez le client, la caméra copie celle de l'hôte.
+   // Crochet de SoccerCamera.OnPostUpdate. Chez le client, la caméra copie celle de l'hôte pendant les ralentis,
+   // la fin de mi-temps et les pauses ; en jeu, elle suit la même cible mais avec les réglages du client.
    // Renvoie vrai si la caméra a été placée ici.
    static boolean ClientCamera(SoccerCamera cCam) {
-      if (m_nRole != _ROLE_CLIENT || !m_bPuppets || !m_bCamReady) {
+      if (m_nRole != _ROLE_CLIENT || !m_bPuppets || !m_bCamReady || m_bCamFree) {
          return false;
       }
 
@@ -2690,6 +2703,7 @@ class ModNet {
       m_nShownCam = -99;
       m_nCamTarget = _CAM_BALL;
       m_bCamReady = false;
+      m_bCamFree = false;
       m_bShownCamReplay = false;
       m_nShownHud = -1;
       m_nShownReplay = -1;

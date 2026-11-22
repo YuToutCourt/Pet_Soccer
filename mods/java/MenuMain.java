@@ -286,6 +286,10 @@ public class MenuMain extends SoccerUserInterface {
       this.AddToSlideIn((UIButton)this.GetElem("ID_MODS"), 0.45F); // [mod]
       this.m_cMenu = (UIMenu)this.GetElem("ID_MENU");
       this.m_cElo = (UIStatic)this.GetElem("ID_ELO");
+      UIStatic cVersion = (UIStatic)this.GetElem("ID_VERSION");
+      if (cVersion != null) {
+         cVersion.SetText(ModVersion.GetText());
+      }
       this.m_cEloBadge = this.GetElem("ID_ELO_BADGE");
       if (this.m_cEloBadge != null) {
          this.m_tEloBadges = ModElo.LoadBadges(this.m_cEloBadge);

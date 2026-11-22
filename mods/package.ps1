@@ -11,8 +11,14 @@
              server\server.py). Sans elle, l'installeur la demande à chaque ami.
   -Port    : port UDP du serveur (7777 par défaut)
   -NoBuild : ne relance pas mods\build.ps1 avant (les classes de build\classes sont prises telles quelles)
+  -Publish : publie le paquet sur GitHub (outil gh), dans la release dont le tag est la version du mod
+             (ModVersion.RELEASE, ex. 3.2), sous le nom PetSoccerMod-update.zip. La release est créée si elle
+             n'existe pas. Le lanceur des joueurs (update.ps1) la trouve et l'installe au prochain lancement.
+
+  La version du mod (montrée au menu principal) est ModVersion.RELEASE dans mods\java\ModVersion.java :
+  l'augmenter avant chaque nouveau paquet, sinon le lanceur des joueurs ne verra pas la mise à jour.
 #>
-param([string]$Server = '', [int]$Port = 7777, [switch]$NoBuild)
+param([string]$Server = '', [int]$Port = 7777, [switch]$NoBuild, [switch]$Publish)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -57,11 +63,11 @@ $text = [regex]::Replace($text, '(?m)^Server\("[^"]*",\s*\d+\)', "Server(`"$addr
 
 # Installeur. PowerShell 5 et le Bloc-notes ne lisent les accents d'un fichier UTF-8 qu'avec sa marque
 # d'en-tête (BOM) ; cmd.exe veut des fins de ligne CRLF dans un .bat.
-foreach ($name in 'install.ps1', 'LISEZMOI.txt') {
+foreach ($name in 'install.ps1', 'update.ps1', 'LISEZMOI.txt') {
     $content = [IO.File]::ReadAllText((Join-Path $Tools $name), [Text.Encoding]::UTF8) -replace "`r?`n", "`r`n"
     [IO.File]::WriteAllText((Join-Path $Out $name), $content, $bom)
 }
-foreach ($name in 'Installer.bat', 'Desinstaller.bat') {
+foreach ($name in 'Installer.bat', 'Desinstaller.bat', 'Jouer.bat') {
     $content = [IO.File]::ReadAllText((Join-Path $Tools $name), [Text.Encoding]::ASCII) -replace "`r?`n", "`r`n"
     [IO.File]::WriteAllText((Join-Path $Out $name), $content, [Text.Encoding]::ASCII)
 }
@@ -69,7 +75,9 @@ foreach ($name in 'Installer.bat', 'Desinstaller.bat') {
 # mod.txt : ce que l'installeur doit savoir du paquet
 $version = [regex]::Match([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'java\ModNet.java')), '_MOD_VERSION\s*=\s*(\d+)').Groups[1].Value
 $sha = (Get-FileHash (Join-Path $Pristine 'code.pak') -Algorithm SHA256).Hash.ToLower()
-$info = @("version=$version", "date=$(Get-Date -Format 'yyyy-MM-dd')", "code_pak_sha256=$sha")
+$release = [regex]::Match([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'java\ModVersion.java')), 'RELEASE\s*=\s*"([0-9.]+)"').Groups[1].Value
+if (-not $release) { throw 'Version du mod introuvable (RELEASE dans mods\java\ModVersion.java).' }
+$info = @("release=$release", "version=$version", "date=$(Get-Date -Format 'yyyy-MM-dd')", "code_pak_sha256=$sha")
 [IO.File]::WriteAllLines((Join-Path $Out 'mod.txt'), [string[]]$info, [Text.Encoding]::ASCII)
 
 # Rien de personnel dans le paquet : il part chez d'autres joueurs
@@ -80,10 +88,25 @@ if (Test-Path $Zip) { Remove-Item $Zip -Force }
 [IO.Compression.ZipFile]::CreateFromDirectory($Out, $Zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 
 $size = [Math]::Round((Get-Item $Zip).Length / 1MB, 1)
-Write-Host "[ok] build\PetSoccerMod.zip : $size Mo, $($classFiles.Count) classes, $dataCount fichiers de données, version en ligne $version"
+Write-Host "[ok] build\PetSoccerMod.zip : $size Mo, $($classFiles.Count) classes, $dataCount fichiers de données, version $release (en ligne $version)"
 if ($Server) {
     Write-Host "     serveur écrit dans le paquet : $Server, port UDP $Port"
 } else {
     Write-Host '     pas d''adresse de serveur dans le paquet (-Server) : l''installeur la demandera à chaque ami'
+}
+
+if ($Publish) {
+    # le nom que cherche le lanceur des joueurs (update.ps1)
+    $asset = Join-Path $Root 'build\PetSoccerMod-update.zip'
+    Copy-Item $Zip $asset -Force
+    # par cmd : sous PowerShell 5, rediriger la sortie d'erreur d'un programme avec « Stop » arrête le script
+    & cmd /c "gh release view $release >nul 2>&1"
+    if ($LASTEXITCODE -eq 0) {
+        & gh release upload $release $asset --clobber
+    } else {
+        & gh release create $release $asset --title "pet_soccer_mod_V$release" --notes "Mod de Pet Soccer, version $release. Avec le raccourci « Pet Soccer (mod) », le jeu se met à jour tout seul."
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'La publication sur GitHub a échoué (gh auth status ?).' }
+    Write-Host "[ok] publié sur GitHub : release $release, PetSoccerMod-update.zip"
 }
 exit 0

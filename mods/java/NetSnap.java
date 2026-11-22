@@ -16,6 +16,7 @@ class NetSnap {
    int nMark1 = -1;
    float[] tCam = new float[6]; // caméra de l'hôte : position, direction
    boolean bCamReplay = false;
+   boolean bCamFree = false; // caméra de l'hôte en jeu normal (ni ralenti, ni fin de mi-temps, ni pause)
    float[] tBall = new float[6]; // position, vitesse
    int nCount0 = 0;
    int nCount1 = 0;

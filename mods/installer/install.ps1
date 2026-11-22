@@ -9,7 +9,9 @@
     - garde une copie des fichiers d'origine qu'elle remplace dans <jeu>\mod_backup (une seule fois) ;
     - ajoute les classes du mod à code.pak (en repartant de l'original) et refait l'index code_inf.pak ;
     - copie les fichiers de données du mod dans Data\ ;
-    - écrit l'adresse du serveur dans Data\online.scr.
+    - écrit l'adresse du serveur dans Data\online.scr ;
+    - met le lanceur en place : <jeu>\mod_maj (update.ps1 et le mod.txt de cette version), <jeu>\Jouer.bat et le
+      raccourci « Pet Soccer (mod) » sur le bureau. Lancé par eux, le jeu se met à jour tout seul (voir update.ps1).
   Les sauvegardes (*.dat) ne sont jamais touchées. Relancer l'installation met le mod à jour.
 
   -Game      : dossier du jeu (celui de PetSoccer.exe). Sans lui, le dossier est cherché, puis demandé.
@@ -99,6 +101,30 @@ function Get-RelativeFiles([string]$Root) {
     return @(Get-ChildItem $Root -Recurse -File | ForEach-Object { $_.FullName.Substring($Root.Length + 1) })
 }
 
+$ShortcutName = 'Pet Soccer (mod).lnk'
+
+# Raccourci du bureau vers le lanceur : il met le mod à jour puis lance le jeu
+function New-GameShortcut([string]$GameDir) {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not $desktop -or -not (Test-Path $desktop)) { return }
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut((Join-Path $desktop $ShortcutName))
+    $link.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $link.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $GameDir 'mod_maj\update.ps1')`""
+    $link.WorkingDirectory = $GameDir
+    $link.IconLocation = (Join-Path $GameDir 'PetSoccer.exe') + ',0'
+    $link.Description = 'Pet Soccer avec le mod (mise à jour automatique)'
+    $link.Save()
+}
+
+# Raccourci du bureau retiré, s'il mène à ce dossier du jeu
+function Remove-GameShortcut([string]$GameDir) {
+    $path = Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName
+    if (-not (Test-Path $path)) { return }
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
+    if ($link.Arguments -like "*$GameDir\mod_maj\*") { Remove-Item $path -Force }
+}
+
 # Adresse et port du serveur écrits dans un online.scr, ou $null
 function Get-ServerLine([string]$Path) {
     if (-not (Test-Path $Path)) { return $null }
@@ -158,6 +184,10 @@ if ($Uninstall) {
         Copy-Item (Join-Path $Backup $rel) (Join-Path $GameDir $rel) -Force
     }
     Remove-Item $Backup -Recurse -Force
+    # le lanceur
+    Remove-Item (Join-Path $GameDir 'mod_maj') -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $GameDir 'Jouer.bat') -Force -ErrorAction SilentlyContinue
+    Remove-GameShortcut $GameDir
     Write-Host "Mod retiré : $($originals.Count) fichiers d'origine remis, $removed fichiers du mod supprimés." -ForegroundColor Green
     Write-Host 'Tes sauvegardes (*.dat) sont restées en place.'
     if (-not $Quiet) { Read-Host 'Appuie sur Entrée pour fermer' | Out-Null }
@@ -251,15 +281,34 @@ if ($address) {
     [IO.File]::WriteAllText($onlinePath, $text, $Enc)
 }
 
+# Lanceur : mod_maj\update.ps1 garde le mod.txt de cette version pour savoir s'il y en a une plus récente
+$launcher = $false
+if (Test-Path (Join-Path $Here 'update.ps1')) {
+    $updateDir = Join-Path $GameDir 'mod_maj'
+    New-Item -ItemType Directory -Force $updateDir | Out-Null
+    Copy-Item (Join-Path $Here 'update.ps1'), (Join-Path $Here 'mod.txt') $updateDir -Force
+    Copy-Item (Join-Path $Here 'Jouer.bat') $GameDir -Force
+    # pas en mode silencieux : une mise à jour par le lanceur garde le raccourci déjà là (et les tests n'en font pas)
+    if (-not $Quiet) {
+        try { New-GameShortcut $GameDir } catch { Write-Host "Raccourci du bureau non créé : $($_.Exception.Message)" }
+    }
+    $launcher = $true
+}
+
 Write-Host ''
-Write-Host "Mod installé (version en ligne $($modInfo['version']), paquet du $($modInfo['date'])) : $($classFiles.Count) classes, $($dataFiles.Count) fichiers." -ForegroundColor Green
+Write-Host "Mod installé (version $($modInfo['release']), version en ligne $($modInfo['version']), paquet du $($modInfo['date'])) : $($classFiles.Count) classes, $($dataFiles.Count) fichiers." -ForegroundColor Green
 if ($address) {
     Write-Host "Serveur en ligne : $address, port UDP $udpPort"
 } else {
     Write-Host 'Serveur en ligne : pas encore réglé. Relance Installer.bat quand tu as l''adresse,'
     Write-Host 'ou écris-la dans Data\online.scr, ligne Server("adresse", 7777).'
 }
-Write-Host 'Lance le jeu comme d''habitude : le bouton « en ligne » est au menu principal.'
+if ($launcher) {
+    Write-Host 'Lance le jeu avec le raccourci « Pet Soccer (mod) » du bureau (ou Jouer.bat dans le dossier du jeu) :'
+    Write-Host 'il installe tout seul les nouvelles versions du mod avant de lancer le jeu.'
+} else {
+    Write-Host 'Lance le jeu comme d''habitude : le bouton « en ligne » est au menu principal.'
+}
 Write-Host 'Fichiers d''origine gardés dans mod_backup : Desinstaller.bat les remet.'
 if (-not $Quiet) { Read-Host 'Appuie sur Entrée pour fermer' | Out-Null }
 exit 0

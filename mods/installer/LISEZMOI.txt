@@ -13,14 +13,23 @@ INSTALLER
    - Il cherche le dossier du jeu. S'il ne le trouve pas, il te le demande.
    - Si le jeu est dans « Program Files », Windows demande les droits d'administrateur : accepte.
    - S'il demande l'adresse du serveur, tape celle que t'a donnée celui qui héberge les parties.
-4. Lance le jeu comme d'habitude.
+4. Lance le jeu avec le raccourci « Pet Soccer (mod) » créé sur le bureau (ou Jouer.bat, dans le
+   dossier du jeu).
 
 Windows peut afficher « Windows a protégé votre ordinateur » au double-clic : clique sur
 « Informations complémentaires » puis « Exécuter quand même ». Le script est lisible : ouvre
 install.ps1 avec le Bloc-notes pour voir ce qu'il fait.
 
-Pour une nouvelle version du mod : refais la même chose avec le nouveau zip. Tes sauvegardes et
-l'adresse du serveur sont gardées.
+
+MISES À JOUR
+------------
+
+Rien à faire : à chaque lancement par le raccourci « Pet Soccer (mod) » (ou Jouer.bat), une petite
+fenêtre cherche une nouvelle version du mod sur GitHub, l'installe si elle existe, puis lance le jeu.
+Tes sauvegardes et l'adresse du serveur sont gardées. Sans Internet, le jeu se lance quand même.
+La version installée est écrite au menu principal, sous le logo.
+
+Si le jeu est lancé autrement (son raccourci d'origine), il n'est pas mis à jour.
 
 
 JOUER EN LIGNE

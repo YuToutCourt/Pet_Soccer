@@ -102,7 +102,7 @@ par l'état du salon : une perte se rattrape au paquet suivant.
   numéro du match en cours (0 = il est dans le salon), équipes et tenues retenues pour ce match.
 - **Départ** : l'hôte tire un numéro de match, l'envoie, puis charge le stade. L'invité qui voit un numéro de match
   qu'il n'a pas encore joué charge le même match. Les réglages viennent tous de l'hôte.
-- **Version** : `ModNet._MOD_VERSION` (6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
+- **Version** : `ModNet._MOD_VERSION` (7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
   et la file d'attente ne réunit que des joueurs de même version. À augmenter dès que les paquets ou les règles du
   match changent.
 - **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5, 4 côté
@@ -278,6 +278,7 @@ python mods\installer\test_installer.py                                        #
   repartant de l'original, refait `code_inf.pak`, copie les données, écrit l'adresse du serveur. Jeu dans
   « Program Files » : il redemande les droits d'administrateur.
 - Mise à jour : relancer `Installer.bat` du nouveau zip. Les sauvegardes et l'adresse du serveur sont gardées.
+  Depuis la version 3.2, le lanceur le fait tout seul (voir « Mises à jour automatiques »).
 - `Desinstaller.bat` remet le dossier du jeu exactement comme avant (vérifié par le test), sauvegardes à part.
 - Il prévient si le `code.pak` de l'ami n'est pas celui de ta version du jeu (autre édition) : le mod est compilé
   contre celle-ci.
@@ -285,6 +286,37 @@ python mods\installer\test_installer.py                                        #
   Réponds « n » et choisis une copie, ou passe `-Game`.
 - Tous les joueurs doivent avoir la même version du mod (`_MOD_VERSION`) : redonne le zip après chaque changement
   des règles ou des paquets.
+
+### Mises à jour automatiques (version 3.2)
+
+Deux numéros différents :
+- `ModVersion.RELEASE` (ex. `3.2`) : la version du mod, affichée au menu principal sous le logo (`ID_VERSION` dans
+  `Main*.scr`), écrite `release=` dans le `mod.txt` du paquet. C'est aussi le tag de la release GitHub.
+  **À augmenter à chaque nouveau paquet**, sinon les lanceurs ne voient rien.
+- `ModNet._MOD_VERSION` (ex. `7`) : la version du jeu en ligne. Elle ne change que si les paquets réseau ou les
+  règles du match changent.
+
+Publier une version : augmenter `RELEASE`, puis
+
+```powershell
+powershell -ExecutionPolicy Bypass -File mods\package.ps1 -Server ton.adresse -Publish
+```
+
+`-Publish` (outil `gh`) envoie le paquet sous le nom `PetSoccerMod-update.zip` dans la release GitHub dont le tag
+est `RELEASE` (créée si elle n'existe pas, sinon le fichier est remplacé). Le gros zip avec l'ISO peut rester à côté
+dans la même release.
+
+Chez les joueurs, l'installation met en place `<jeu>\mod_maj\update.ps1` (avec le `mod.txt` de la version
+installée), `<jeu>\Jouer.bat` et le raccourci « Pet Soccer (mod) » sur le bureau (installation normale seulement,
+pas en `-Quiet`). À chaque lancement, `update.ps1` lit
+`https://api.github.com/repos/YuToutCourt/Pet_Soccer/releases/latest` (les brouillons et les préversions sont
+ignorés) ; si le tag est plus grand que la version installée et que la release contient `PetSoccerMod-update.zip`,
+il le télécharge, vérifie son SHA-256 (champ `digest` de GitHub), lance `install.ps1 -Game … -Quiet` (droits
+d'administrateur demandés si le jeu est dans Program Files), puis lance le jeu. En cas d'échec (pas d'Internet,
+fichier abîmé), le jeu se lance avec la version déjà installée. `Desinstaller.bat` retire aussi le lanceur et le
+raccourci. Testé par `test_installer.py` avec une fausse release en `file:///`.
+
+Les amis qui ont une version d'avant 3.2 doivent installer la 3.2 une dernière fois à la main.
 
 ## Ce qui est coupé en ligne
 
@@ -361,8 +393,10 @@ python mods\installer\test_installer.py                                        #
   sans physique.
 - Interpolation entre deux états, avec 100 ms de retard (`_INTERP_DELAY`).
 - `FootBaller.PlayAnim` ne joue que les animations venues de l'hôte.
-- Caméra : copie de celle de l'hôte (`SoccerCamera.OnPostUpdate` → `ModNet.ClientCamera`). Les deux joueurs
-  voient la même image, comme en multi local.
+- Caméra : en jeu, chaque joueur a la sienne (mode F1-F4, zoom, souris) : elle suit la cible envoyée par l'hôte
+  (ballon, joueur…). L'hôte marque son état « caméra libre » (bit 2 de l'octet du ralenti) quand la sienne suit
+  sa cible sans ralenti, fin de mi-temps, pause ni super tir. Sinon le client copie la caméra de l'hôte
+  (`SoccerCamera.OnPostUpdate` → `ModNet.ClientCamera`), pour garder les mêmes plans.
 - Touches : la manette de l'équipe de gauche (réglages du joueur 1) capte les touches et les envoie au lieu de
   les jouer (`ModNet.OnLocalKey`). Clavier seulement pour l'instant. Les touches directes vers un joueur (2 à 7,
   `ModSwitch`) partent avant ce crochet, en actions `_ACT_SEL + k` (11..16) jouées par `ModNet.HostApplyKey`.
