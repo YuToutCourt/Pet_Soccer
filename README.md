@@ -42,7 +42,7 @@ mode Ligue, mode Survie, succès, nouvelles équipes et une IA bien plus coriace
 - Les modes d'origine (match, championnat, multijoueur local) restent là.
 
 **Gameplay**
-- Écran **Tactique** : rôles (libéro, latéral, ailier, pivot…), schémas, placements en jeu, au coup d'envoi, sur les touches et les dégagements.
+- Écran **Tactique** : rôles (libéro, latéral, ailier, pivot…), schémas, placements en jeu, au coup d'envoi, sur les touches et les dégagements. Ce que fait chaque rôle : [docs/roles.md](docs/roles.md).
 - Déplacements sans ballon : démarquage, appels en profondeur, une-deux, passe dans la course.
 - Hors-jeu « doux », passes longues moins précises.
 - Difficulté **Expert, Maître et Légende** (niveaux 8 à 10) avec une IA plus rapide et plus précise.
