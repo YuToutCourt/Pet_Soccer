@@ -2,6 +2,8 @@
 // résultats de la dernière journée à droite. Le retour de match ramène toujours ici (SoccerMainMenuModule.ShowLoadingScreen) ;
 // pendant les playoffs, il passe la main au tableau (MenuLeagueBracket).
 // Écran généré par mods/ui/make_league_scr.py, voir notes/league.md.
+// Ligue en ligne (ModOnlineLeague.m_bView) : la ligue vient du serveur, l'écran se relit quand elle change, les équipes
+// des autres joueurs sont en bleu, et « retour » ramène à l'écran de la ligue en ligne.
 public class MenuLeague extends SoccerUserInterface {
    static final int _ROWS = 14;
    static final int _RESULTS = 7;
@@ -28,6 +30,7 @@ public class MenuLeague extends SoccerUserInterface {
    UIStaticBlinking m_cInfoScreenText = null;
    UIWindow m_cInfoScreen = null;
    float m_fInfoTime = 5.0F;
+   int m_nShownVersion = -1; // ligue en ligne : version de l'état affiché
 
    MenuLeague() {
       super.m_sFiles = new String[]{"data\\menu\\scr\\League640.scr", "data\\menu\\scr\\League.scr", "data\\menu\\scr\\League1024.scr"};
@@ -68,28 +71,73 @@ public class MenuLeague extends SoccerUserInterface {
    }
 
    public void Show() {
-      ModLeague l = ModLeagueMode.GetLeague();
+      boolean bOnline = ModOnlineLeague.m_bView;
+      ModLeague l = ModOnlineLeague.GetViewLeague();
       if (l == null) {
          this.GoToMainMenu();
          return;
       }
 
-      CoreLogic.m_bLeague = true;
+      if (bOnline) {
+         ModOnlineLeague.m_bScreen = true; // on suit la ligue pendant qu'on la regarde
+      } else {
+         CoreLogic.m_bLeague = true;
+      }
+
       // fin de la ligue annoncée ici (classement final), sinon les playoffs se suivent sur le tableau
-      boolean bLeagueEnd = ModLeagueMode.m_bHasLast && ModLeagueMode.m_bLastLeague && l.m_nPhase != ModLeague._PHASE_LEAGUE;
+      boolean bLeagueEnd = !bOnline && ModLeagueMode.m_bHasLast && ModLeagueMode.m_bLastLeague && l.m_nPhase != ModLeague._PHASE_LEAGUE;
       if (l.m_nPhase != ModLeague._PHASE_LEAGUE && !bLeagueEnd) {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_LEAGUE_BRACKET);
          return;
       }
 
-      ModLeagueMode.m_bHasLast = false;
+      if (!bOnline) {
+         ModLeagueMode.m_bHasLast = false;
+      }
+
       this.Refresh(l);
+      this.m_nShownVersion = ModOnlineLeague.m_nVersion;
       super.m_sTitle = "";
       this.CenterCursor();
       super.Show();
+      this.DisableCallMethod("Tick");
+      if (bOnline) {
+         this.CallMethodEvery("Tick", 0.5F);
+      }
       if (bLeagueEnd) {
          this.ShowInfoScreen(Text.Get(l.IsPlayerQualified() ? "&LeagueInfoQualified&" : "&LeagueInfoNotQualified&"));
       }
+   }
+
+   public void Hide() {
+      this.DisableCallMethod("Tick");
+      if (ModOnlineLeague.m_bView) {
+         ModOnlineLeague.m_bScreen = false;
+      }
+
+      super.Hide();
+   }
+
+   // ligue en ligne : les autres joueurs jouent pendant qu'on regarde
+   void Tick() {
+      ModLeague l = ModOnlineLeague.GetViewLeague();
+      if (l == null) {
+         this.GoToMainMenu();
+      } else if (l.m_nPhase != ModLeague._PHASE_LEAGUE) {
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_LEAGUE_BRACKET);
+      } else if (this.m_nShownVersion != ModOnlineLeague.m_nVersion) {
+         this.m_nShownVersion = ModOnlineLeague.m_nVersion;
+         this.Refresh(l);
+      }
+   }
+
+   // couleur d'une équipe : moi, un autre joueur (ligue en ligne), ou sinon c
+   static float[] TeamColor(ModLeague l, int nTeam, float[] c) {
+      if (nTeam == l.m_nPlayer) {
+         return _GOLD;
+      }
+
+      return l.IsOtherHuman(nTeam) ? MenuOnlineLeague._HUMAN : c;
    }
 
    static void SetColor(UIStatic s, float[] c) {
@@ -150,14 +198,14 @@ public class MenuLeague extends SoccerUserInterface {
             row[6].SetText(s[4] + ":" + s[5]);
             row[7].SetText((s[4] > s[5] ? "+" : "") + (s[4] - s[5]));
             row[8].SetText("" + s[6]);
-            float[] c = t == l.m_nPlayer ? _GOLD : (r < nQualifiers ? _WHITE : _GREY);
+            float[] c = TeamColor(l, t, r < nQualifiers ? _WHITE : _GREY);
 
             for (int k = 0; k < row.length; k++) {
                SetColor(row[k], c);
             }
 
             // la place qualificative se lit sur le numéro
-            SetColor(row[0], t == l.m_nPlayer ? _GOLD : (r < nQualifiers ? _GREEN : _GREY));
+            SetColor(row[0], TeamColor(l, t, r < nQualifiers ? _GREEN : _GREY));
          }
       }
 
@@ -192,7 +240,8 @@ public class MenuLeague extends SoccerUserInterface {
             if (l.m_tFRound[f] == nRound && l.m_tFPlayed[f]) {
                UIStatic s = this.m_tResults[k++];
                s.SetText(MatchText(s, l.m_tTeam[l.m_tFHost[f]], l.m_tTeam[l.m_tFGuest[f]], l.m_tFGH[f] + " : " + l.m_tFGG[f]));
-               SetColor(s, l.m_tFHost[f] != l.m_nPlayer && l.m_tFGuest[f] != l.m_nPlayer ? _WHITE : _GOLD);
+               SetColor(s, l.m_tFHost[f] == l.m_nPlayer || l.m_tFGuest[f] == l.m_nPlayer ? _GOLD
+                  : (l.IsOtherHuman(l.m_tFHost[f]) || l.IsOtherHuman(l.m_tFGuest[f]) ? MenuOnlineLeague._HUMAN : _WHITE));
             }
          }
       } else {
@@ -229,10 +278,20 @@ public class MenuLeague extends SoccerUserInterface {
       }
 
       this.m_cBack.SetText(Text.Get("&MenuBack&"));
+      // ligue en ligne : les matchs se lancent depuis l'écran de la ligue en ligne (phases 3 et 4)
+      if (ModOnlineLeague.m_bView) {
+         this.m_cPlay.Hide();
+      } else {
+         this.m_cPlay.Show();
+      }
    }
 
    void OnOK() {
       this.HideInfoScreen();
+      if (ModOnlineLeague.m_bView) {
+         return;
+      }
+
       ModLeague l = ModLeagueMode.GetLeague();
       if (l == null) {
          this.GoToMainMenu();
@@ -250,6 +309,11 @@ public class MenuLeague extends SoccerUserInterface {
    }
 
    void GoToMainMenu() {
+      if (ModOnlineLeague.m_bView) {
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE); // ligue en ligne
+         return;
+      }
+
       CoreLogic.m_bLeague = false;
       ((SoccerMainMenuModule)this.GetModule()).ShowUI(0);
    }

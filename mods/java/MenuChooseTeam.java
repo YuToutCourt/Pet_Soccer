@@ -58,7 +58,10 @@ public class MenuChooseTeam extends SoccerUserInterface {
       Commentator comm = this.GetCommentator();
       comm.StopTalking();
       this.DisableCallMethod("CommentOnTeam");
-      if (ModLobby.IsMenu()) {
+      if (ModLobby.IsMenu() && ModOnlineLeague.m_bPickTeam) {
+         ModOnlineLeague.m_bPickTeam = false;
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE); // [mod] ligue en ligne
+      } else if (ModLobby.IsMenu()) {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE); // [mod] en ligne : retour au salon
       } else if (this.m_nPlayer != 0) {
          this.m_nPlayer = 0;

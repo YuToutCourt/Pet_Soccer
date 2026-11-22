@@ -1,7 +1,7 @@
 // [mod] Playoffs de la ligue (mode Ligue, ModLeagueMode / ModLeague) : tableau des gagnants en haut, des perdants en bas,
 // grande finale (et revanche éventuelle) à droite, prochain match et dernier résultat du joueur en bas.
 // Ouvert par MenuLeague (où ramène le retour de match). Écran généré par mods/ui/make_league_scr.py
-// (prévu pour 8 qualifiés au plus), voir notes/league.md.
+// (prévu pour 8 qualifiés au plus), voir notes/league.md. Ligue en ligne : comme MenuLeague.
 public class MenuLeagueBracket extends SoccerUserInterface {
    static final int _WB_ROUNDS = 3;
    static final int _LB_ROUNDS = 4;
@@ -15,6 +15,7 @@ public class MenuLeagueBracket extends SoccerUserInterface {
    UIStaticBlinking m_cInfoScreenText = null;
    UIWindow m_cInfoScreen = null;
    float m_fInfoTime = 5.0F;
+   int m_nShownVersion = -1; // ligue en ligne : version de l'état affiché
 
    MenuLeagueBracket() {
       super.m_sFiles = new String[]{"data\\menu\\scr\\LeagueBracket640.scr", "data\\menu\\scr\\LeagueBracket.scr", "data\\menu\\scr\\LeagueBracket1024.scr"};
@@ -37,24 +38,36 @@ public class MenuLeagueBracket extends SoccerUserInterface {
    }
 
    public void Show() {
-      ModLeague l = ModLeagueMode.GetLeague();
+      boolean bOnline = ModOnlineLeague.m_bView;
+      ModLeague l = ModOnlineLeague.GetViewLeague();
       if (l == null || l.m_nPhase == ModLeague._PHASE_LEAGUE) {
-         ((SoccerMainMenuModule)this.GetModule()).ShowUI(l == null ? 0 : SoccerMainMenuModule._UI_LEAGUE);
+         int nUI = l != null ? SoccerMainMenuModule._UI_LEAGUE : (bOnline ? SoccerMainMenuModule._UI_ONLINE_LEAGUE : 0);
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(nUI);
          return;
       }
 
-      CoreLogic.m_bLeague = true;
       // résultat du dernier match de playoffs (une seule annonce)
       int nReport = -2;
-      if (ModLeagueMode.m_bHasLast && !ModLeagueMode.m_bLastLeague) {
-         nReport = ModLeagueMode.m_nLastResult;
+      if (bOnline) {
+         ModOnlineLeague.m_bScreen = true;
+      } else {
+         CoreLogic.m_bLeague = true;
+         if (ModLeagueMode.m_bHasLast && !ModLeagueMode.m_bLastLeague) {
+            nReport = ModLeagueMode.m_nLastResult;
+         }
+
+         ModLeagueMode.m_bHasLast = false;
       }
 
-      ModLeagueMode.m_bHasLast = false;
       this.Refresh(l, nReport);
+      this.m_nShownVersion = ModOnlineLeague.m_nVersion;
       super.m_sTitle = "";
       this.CenterCursor();
       super.Show();
+      this.DisableCallMethod("Tick");
+      if (bOnline) {
+         this.CallMethodEvery("Tick", 0.5F);
+      }
       if (nReport == ModLeague._RES_CHAMPION) {
          this.ShowInfoScreen(Text.Get("&LeagueInfoWon&"));
       } else if (nReport == ModLeague._RES_REPLAY) {
@@ -63,6 +76,26 @@ public class MenuLeagueBracket extends SoccerUserInterface {
          this.ShowInfoScreen(Text.Get("&LeagueInfoOut&"));
       } else if (nReport == ModLeague._RES_CONTINUE && this.DroppedToLosers(l)) {
          this.ShowInfoScreen(Text.Get("&LeagueInfoLosers&"));
+      }
+   }
+
+   public void Hide() {
+      this.DisableCallMethod("Tick");
+      if (ModOnlineLeague.m_bView) {
+         ModOnlineLeague.m_bScreen = false;
+      }
+
+      super.Hide();
+   }
+
+   // ligue en ligne : le tableau avance pendant qu'on le regarde
+   void Tick() {
+      ModLeague l = ModOnlineLeague.GetViewLeague();
+      if (l == null) {
+         this.GoToMainMenu();
+      } else if (this.m_nShownVersion != ModOnlineLeague.m_nVersion) {
+         this.m_nShownVersion = ModOnlineLeague.m_nVersion;
+         this.Refresh(l, -2);
       }
    }
 
@@ -145,6 +178,8 @@ public class MenuLeagueBracket extends SoccerUserInterface {
             c = MenuLeague._GOLD;
          } else if (bPlayed && l.GetLoser(m) == nTeam) {
             c = MenuLeague._GREY;
+         } else if (l.IsOtherHuman(nTeam)) {
+            c = MenuOnlineLeague._HUMAN;
          }
 
          this.SetLine(sId, sName, bPlayed ? "" + nGoals : "", c);
@@ -247,10 +282,22 @@ public class MenuLeagueBracket extends SoccerUserInterface {
       } else {
          this.SetMsg(this.m_cMsg1, Text.Get("&LeagueQualified&") + " (" + (l.GetRank(l.m_nPlayer) + 1) + ")", MenuLeague._GREEN);
       }
+
+      // ligue en ligne : les matchs se lancent depuis l'écran de la ligue en ligne, « retour » y ramène
+      if (ModOnlineLeague.m_bView) {
+         this.m_cPlay.Hide();
+         this.m_cBack.Show();
+      } else {
+         this.m_cPlay.Show();
+      }
    }
 
    void OnOK() {
       this.HideInfoScreen();
+      if (ModOnlineLeague.m_bView) {
+         return;
+      }
+
       ModLeague l = ModLeagueMode.GetLeague();
       if (l == null || l.m_nPhase == ModLeague._PHASE_OVER) {
          // ligue terminée : elle est retirée de league.dat (les matchs restent dans l'historique du profil)
@@ -267,6 +314,11 @@ public class MenuLeagueBracket extends SoccerUserInterface {
    }
 
    void GoToMainMenu() {
+      if (ModOnlineLeague.m_bView) {
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE); // ligue en ligne
+         return;
+      }
+
       CoreLogic.m_bLeague = false;
       ((SoccerMainMenuModule)this.GetModule()).ShowUI(0);
    }

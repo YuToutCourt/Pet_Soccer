@@ -159,7 +159,7 @@ class ModLeagueMode {
 
    // un match de ligue (ou un écran de la ligue) est en cours
    static boolean IsActive() {
-      return CoreLogic.m_bLeague && !CoreLogic.m_bDemo && !CoreLogic.m_bMultiplayer && GetLeague() != null;
+      return CoreLogic.m_bLeague && !ModOnlineLeague.m_bMatch && !CoreLogic.m_bDemo && !CoreLogic.m_bMultiplayer && GetLeague() != null;
    }
 
    // playoffs : égalité à la fin du temps -> but en or (Match.Update)

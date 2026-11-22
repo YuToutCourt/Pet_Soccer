@@ -379,7 +379,7 @@ public class MenuMain extends SoccerUserInterface {
       }
 
       // [mod] test du salon sans souris : NetAuto dans debugconf.scr (une fois)
-      if ((ModLobby.m_nAuto == 1 || ModLobby.m_nAuto == 2 || ModLobby.m_nAuto == 4) && !m_bOnlineTestDone) {
+      if (ModLobby.m_nAuto >= 1 && ModLobby.m_nAuto <= 6 && ModLobby.m_nAuto != 3 && !m_bOnlineTestDone) {
          m_bOnlineTestDone = true;
          this.CallMethodIn("OnlineTest", 1.0F);
       }

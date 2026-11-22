@@ -102,11 +102,12 @@ par l'état du salon : une perte se rattrape au paquet suivant.
   numéro du match en cours (0 = il est dans le salon), équipes et tenues retenues pour ce match.
 - **Départ** : l'hôte tire un numéro de match, l'envoie, puis charge le stade. L'invité qui voit un numéro de match
   qu'il n'a pas encore joué charge le même match. Les réglages viennent tous de l'hôte.
-- **Version** : `ModNet._MOD_VERSION` (4). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
+- **Version** : `ModNet._MOD_VERSION` (6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
   et la file d'attente ne réunit que des joueurs de même version. À augmenter dès que les paquets ou les règles du
   match changent.
-- **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5). Un jeu d'une
-  autre version voit « Le serveur n'a pas la même version ».
+- **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5, 4 côté
+  serveur depuis la ligue en ligne, `notes/online-league.md`). Le serveur accepte les versions de
+  `protocol.LOBBY_PROTOS` (3 et 4) ; un jeu d'une autre version voit « Le serveur n'a pas la même version ».
 - Même équipe et même tenue des deux côtés : l'invité prend la tenue suivante.
 - Le serveur ne lit ni `STATE` ni les paquets du match : il n'a pas à changer quand le mod change.
 - **Mi-temps** : l'invité qui revoit sa composition la renvoie dans son `STATE` ; l'hôte, qui voit qu'elle a

@@ -1,6 +1,6 @@
 // [mod] Écran « en ligne » (ModLobby), voir notes/online.md. Deux états :
 // - hors salon : état du serveur, « créer » un salon ou « rejoindre » celui dont on tape le code, « partie rapide »
-//   (file d'attente d'une partie classée), et le classement de l'Elo en ligne à droite ;
+//   (file d'attente d'une partie classée), « ligue » (MenuOnlineLeague), et le classement de l'Elo en ligne à droite ;
 // - dans un salon : les deux joueurs et leur équipe, « équipe », « tactique », « prêt » (invité) ou « jouer » (hôte),
 //   stade et durée choisis par l'hôte. En partie classée les deux joueurs se mettent prêts et le match part seul.
 // L'état vient du réseau : l'écran se relit 5 fois par seconde (Tick). Écran généré par mods/ui/make_online_scr.py.
@@ -15,6 +15,8 @@ public class MenuOnline extends SoccerUserInterface {
    UIEdit m_cCode = null;
    UIButton m_cAction1 = null;
    UIButton m_cAction2 = null;
+   UIButton m_cAction3 = null; // « ligue » hors salon, caché dans un salon
+   boolean m_bAction3Shown = true;
    UIStatic m_cStadium = null;
    UIStatic m_cTime = null;
    UIStatic m_cVs = null;
@@ -45,6 +47,8 @@ public class MenuOnline extends SoccerUserInterface {
       this.m_cCode.m_sForbiddenChars = "\\/~!@#$%^&*_+|{}[]<>?,'\"` .;:-=()0123456789";
       this.m_cAction1 = (UIButton)this.GetElem("ID_ACTION1");
       this.m_cAction2 = (UIButton)this.GetElem("ID_ACTION2");
+      this.m_cAction3 = (UIButton)this.GetElem("ID_ACTION3");
+      this.m_bAction3Shown = true;
       this.m_cStadium = (UIStatic)this.GetElem("ID_STADIUM_VALUE");
       this.m_cTime = (UIStatic)this.GetElem("ID_TIME_VALUE");
       this.m_cVs = (UIStatic)this.GetElem("ID_VS");
@@ -98,6 +102,28 @@ public class MenuOnline extends SoccerUserInterface {
 
    // L'état du salon change sans que le joueur ne clique : on le relit régulièrement
    void Tick() {
+      // tests de la ligue en ligne sans souris (NetAuto 5 et 6) : droit à l'écran de la ligue
+      if ((ModLobby.m_nAuto == 5 || ModLobby.m_nAuto == 6) && !MenuOnlineLeague.m_bAutoOpened && ModLobby.m_nNet == ModLobby._NET_ONLINE) {
+         long lNow = System.currentTimeMillis();
+         if (MenuOnlineLeague.m_lAutoNext == 0L) {
+            MenuOnlineLeague.m_lAutoNext = lNow + 4000L; // le temps de voir cet écran
+         }
+
+         if (lNow < MenuOnlineLeague.m_lAutoNext) {
+            this.Refresh();
+            return;
+         }
+
+         MenuOnlineLeague.m_bAutoOpened = true;
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE);
+         return;
+      }
+
+      // salon d'un match de la ligue en ligne : il ne se joue que depuis l'écran de la ligue, avec les équipes de la ligue
+      if (ModLobby.m_bLeagueRoom && !ModNet.IsOnline()) {
+         ModLobby.StopLeague();
+      }
+
       ModLobby.AutoMenuFrame();
       if (ModLobby.GuestCheckStart()) {
          return; // le match se charge
@@ -162,7 +188,7 @@ public class MenuOnline extends SoccerUserInterface {
       return nElo > 0 && sName.length() > 0 ? sName + "  " + nElo : sName;
    }
 
-   String NetText() {
+   static String NetText() {
       switch (ModLobby.m_nNet) {
          case ModLobby._NET_ONLINE:
             return T("OnlineNetOnline") + (ModLobby.m_nOnline > 1 ? ", " + ModLobby.m_nOnline + T("OnlineCount") : "");
@@ -204,6 +230,15 @@ public class MenuOnline extends SoccerUserInterface {
       }
 
       this.Set(this.m_cFrameMatch, T(bRoom ? "OnlineFrameMatch" : "OnlineFrameTop"));
+      if (this.m_cAction3 != null && this.m_bAction3Shown == bRoom) {
+         this.m_bAction3Shown = !bRoom;
+         if (bRoom) {
+            this.m_cAction3.Hide();
+         } else {
+            this.m_cAction3.Show();
+         }
+      }
+
       this.RefreshTop(!bRoom);
       if (!bRoom) {
          this.RefreshLobby(bOnline);
@@ -267,6 +302,8 @@ public class MenuOnline extends SoccerUserInterface {
       this.Set(this.m_cAction2, T("OnlineJoin"));
       this.SetDisabled(this.m_cAction1, !bOnline || bBusy);
       this.SetDisabled(this.m_cAction2, !bOnline || bBusy);
+      this.Set(this.m_cAction3, T("OnlineLeague"));
+      this.SetDisabled(this.m_cAction3, bBusy);
       this.Set(this.m_cOk, T("OnlineQuick"));
       this.SetDisabled(this.m_cOk, !bOnline || bBusy);
       this.Set(this.m_cBack, T(bQueue ? "OnlineCancel" : "MenuBack"));
@@ -517,6 +554,8 @@ public class MenuOnline extends SoccerUserInterface {
          this.OnAction1();
       } else if (sId.equals("ID_ACTION2")) {
          this.OnAction2();
+      } else if (sId.equals("ID_ACTION3") && !ModLobby.InRoom() && ModLobby.m_nWant == ModLobby._WANT_NONE) {
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE);
       } else if (sId.startsWith("ID_STADIUM_") && nDelta != 0) {
          ModLobby.NextLevel(nDelta);
          this.Refresh();

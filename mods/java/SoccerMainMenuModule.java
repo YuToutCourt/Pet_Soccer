@@ -32,7 +32,8 @@ public class SoccerMainMenuModule extends SoccerMenuModule {
    static final int _UI_LEAGUE = 23; // [mod] mode Ligue : classement (MenuLeague)
    static final int _UI_LEAGUE_BRACKET = 24; // [mod] mode Ligue : playoffs (MenuLeagueBracket)
    static final int _UI_ONLINE = 25; // [mod] en ligne : serveur et salon (MenuOnline)
-   SoccerUserInterface[] m_tUIs = new SoccerUserInterface[26];
+   static final int _UI_ONLINE_LEAGUE = 26; // [mod] ligue en ligne (MenuOnlineLeague)
+   SoccerUserInterface[] m_tUIs = new SoccerUserInterface[27];
    MenuBall m_cMenuBall = null;
    MeshObject m_cMenuScreen = null;
    MenuObjects m_cMenuObjects = null;
@@ -107,7 +108,7 @@ public class SoccerMainMenuModule extends SoccerMenuModule {
       }
 
       // [mod] en ligne : au retour d'un match, le coin de l'écran redit le nom du profil et non « joueur 1 »
-      if (nUI == _UI_ONLINE) {
+      if (nUI == _UI_ONLINE || nUI == _UI_ONLINE_LEAGUE) {
          CoreLogic.m_bMultiplayer = false;
          MenuBackground.SetPlayerType(0);
       }
@@ -150,7 +151,8 @@ public class SoccerMainMenuModule extends SoccerMenuModule {
 
       this.ShowUI(4);
       if (ModLobby.IsMenu()) {
-         m_nPrevUI = _UI_ONLINE; // [mod] en ligne : retour au salon après le match
+         // [mod] en ligne : retour au salon après le match, ou à l'écran de la ligue en ligne
+         m_nPrevUI = ModOnlineLeague.m_bMatch || ModOnlineLeague.m_bFriendMatch ? _UI_ONLINE_LEAGUE : _UI_ONLINE;
       } else if (CoreLogic.m_bChampionships) {
          m_nPrevUI = 11;
       } else if (CoreLogic.m_bMultiplayer) {
@@ -301,6 +303,9 @@ public class SoccerMainMenuModule extends SoccerMenuModule {
             break;
          case 25:
             cUI = (SoccerUserInterface)this.CreateObject("MenuOnline"); // [mod]
+            break;
+         case 26:
+            cUI = (SoccerUserInterface)this.CreateObject("MenuOnlineLeague"); // [mod]
       }
 
       if (cUI == null) {

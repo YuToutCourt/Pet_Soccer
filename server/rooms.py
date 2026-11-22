@@ -73,6 +73,7 @@ class Room:
         self.engaged = set()  # rôles qui ont envoyé un paquet de match depuis : le match a vraiment commencé
         self.claim_at = None  # heure où un joueur a dit avoir perdu l'autre, pas encore confirmé
         self.decided = set()  # numéros des matchs déjà comptés ou annulés
+        self.league = None  # (numéro de la ligue, clé du match) : salon ouvert pour un match de ligue entre deux joueurs
 
     def members(self):
         return 2 if self.guest else 1
@@ -103,6 +104,7 @@ class Lobby:
         self.queue_range = queue_range  # écart d'Elo accepté en entrant dans la file d'attente
         self.queue_grow = queue_grow  # points d'Elo ajoutés à cet écart par seconde d'attente, sans limite
         self.direct = direct  # donner aux joueurs d'un salon l'adresse de l'autre (liaison directe)
+        self.leagues = None  # leagues.Leagues : ligues en ligne
         self.now = 0.0
         self.log = lambda text: None
 
@@ -338,6 +340,49 @@ class Lobby:
             self.log("partie classée %s : %r (hôte) contre %r, écart d'Elo %d après %d s d'attente" % (
                 code, host.player, guest.player, best_gap, now - first.queue_since))
 
+    # --- ligue en ligne : match entre deux joueurs ---
+
+    def league_play(self, session, now):
+        """Le joueur attend de jouer son match de ligue contre un autre joueur (LG_PLAY). Si l'autre l'attend aussi,
+        le serveur ouvre un salon classé entre eux, l'équipe qui reçoit en hôte. Renvoie un code P.LGE_*."""
+        if self.leagues is None or session.player is None:
+            return P.LGE_NONE
+        pair = self.leagues.pairing(session.player.id, self.leagues.clock())
+        if pair is None:
+            return P.LGE_NONE
+        lg, key, home_id, away_id = pair
+        host, guest = self.by_player.get(home_id), self.by_player.get(away_id)
+        if host is None or guest is None:
+            return P.LGE_NONE
+        for s in (host, guest):
+            if s.room is not None:
+                if s.room.league == (lg.id, key):
+                    return P.LGE_NONE  # déjà ouvert
+                if s.room.ranked and s.room.live:
+                    return P.LGE_NONE  # l'autre finit un match classé
+        if host.mod_version != guest.mod_version:
+            return P.LGE_VERSION
+        code = self.new_code()
+        if code is None or len(self.rooms) >= self.max_rooms:
+            return P.LGE_LIMIT
+        for s in (host, guest):
+            self.leave(s, "match de ligue")
+        room = Room(code, host, ranked=True, key=self.new_key())
+        room.guest = guest
+        room.league = (lg.id, key)
+        self.rooms[code] = room
+        for s in (host, guest):
+            s.room = room
+            s.report = None
+            self.leagues.want.pop(s.player.id, None)
+        self.log("ligue %s : salon %s pour %s, %r (hôte) contre %r" % (lg.code, code, self.leagues.key_name(lg, key),
+                                                                     host.player, guest.player))
+        return P.LGE_NONE
+
+    def league_busy(self):
+        """(ligue, clé) des matchs de ligue entre joueurs ouverts dans un salon : le délai les épargne."""
+        return {room.league for room in self.rooms.values() if room.league is not None}
+
     # --- matchs classés ---
 
     def match_packet(self, session, now):
@@ -426,6 +471,9 @@ class Lobby:
             margin = max(1, score_guest - score_host if loser is host else score_host - score_guest)
             goals = (0, margin) if loser is host else (margin, 0)
         delta_host, delta_guest = self.store.record(host.player, guest.player, score_host, score_guest, goals, loser is not None)
+        if room.league is not None and self.leagues is not None:
+            # match de ligue : le score retenu pour l'Elo (forfait compris) entre dans la ligue
+            self.leagues.match_result(room.league[0], room.league[1], goals[0], goals[1])
         for session, delta in ((host, delta_host), (guest, delta_guest)):
             how = P.HOW_PLAYED if loser is None else (P.HOW_MY_FORFEIT if session is loser else P.HOW_PEER_FORFEIT)
             session.result = (match_id, P.RESULT_RATED, how, delta)

@@ -1,12 +1,14 @@
 # Génère l'écran « en ligne » (data/menu/scr/Online{640,,1024}.scr), lu par MenuOnline :
-# - cadre « salon » à gauche : état du serveur, code du salon (champ de saisie), deux boutons dont MenuOnline change le
-#   texte (« créer » / « rejoindre » hors salon, « équipe » / « tactique » dans un salon), puis stade et durée (« < valeur > ») ;
+# - cadre « salon » à gauche : état du serveur, code du salon (champ de saisie), trois boutons dont MenuOnline change le
+#   texte (« créer » / « rejoindre » / « ligue » hors salon, « équipe » / « tactique » dans un salon, le troisième caché),
+#   puis stade et durée (« < valeur > ») ;
 # - cadre « match » à droite : logo, équipe, nom et état de l'hôte et de l'invité, puis 3 lignes de message ;
 #   hors salon le cadre s'appelle « classement » et montre 8 lignes de classement et celle du joueur ;
 # - boutons ID_OK (« partie rapide » / « prêt » / « jouer ») et ID_CANCEL (« retour » / « annuler » / « quitter ») en bas.
 # Polices, cadres, flèches et boutons du bas viennent d'Options > Match de chaque résolution ; le champ de saisie et les
 # boutons du cadre viennent de l'écran de choix du profil (ChoosePlayer).
 # Usage : python mods/ui/make_online_scr.py  ->  mods/data/Data/Menu/scr/Online*.scr
+# Ses fonctions servent aussi à make_online_league_scr.py (écran de la ligue en ligne).
 import os
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -20,6 +22,7 @@ LOGO = "data/menu/logos/T_Logo_Bullrusia.png"  # remplacé par MenuOnline
 SMALL = "FLRomanSmall"  # petite police ajoutée par le mod dans SoccerFonts (14/16/21 px selon la résolution)
 ROW_H = 0.053333335
 ACTION_WIDTH = 0.3  # boutons du cadre (0,249 dans ChoosePlayer) : en 640, « rejoindre » dépassait et perdait son fond
+ACTION_HEIGHT = 0.075  # 0,08 dans ChoosePlayer : trois boutons doivent tenir au-dessus des deux lignes de réglage
 
 
 def read(name):
@@ -173,11 +176,12 @@ def build(res):
         static("ID_STATUS", "", SMALL, CENTER, 0.03, 0.13, 0.357, 0.045),
         static("ID_CODE_LABEL", "&&OnlineCode&&", roman, LEFT, 0.06, 0.24, 0.1, ROW_H),
         clone(edit, "UIEdit", "ID_EDIT", "ID_CODE", "", (0.43, 0.24), (0.135, 0.055), center_x=0),
-        clone(button, "UIButtonFlying", "ID_OK", "ID_ACTION1", "&&OnlineCreate&&", (0.0, 0.36), (ACTION_WIDTH, 0.08)),
-        clone(button, "UIButtonFlying", "ID_OK", "ID_ACTION2", "&&OnlineJoin&&", (0.0, 0.5), (ACTION_WIDTH, 0.08)),
+        clone(button, "UIButtonFlying", "ID_OK", "ID_ACTION1", "&&OnlineCreate&&", (0.0, 0.34), (ACTION_WIDTH, ACTION_HEIGHT)),
+        clone(button, "UIButtonFlying", "ID_OK", "ID_ACTION2", "&&OnlineJoin&&", (0.0, 0.465), (ACTION_WIDTH, ACTION_HEIGHT)),
+        clone(button, "UIButtonFlying", "ID_OK", "ID_ACTION3", "&&OnlineLeague&&", (0.0, 0.59), (ACTION_WIDTH, ACTION_HEIGHT)),
     ]
-    left += row(trigger, value_deco, roman, "STADIUM", "&&OnlineStadium&&", 0.69)
-    left += row(trigger, value_deco, roman, "TIME", "&&OnlineTime&&", 0.82)
+    left += row(trigger, value_deco, roman, "STADIUM", "&&OnlineStadium&&", 0.73)
+    left += row(trigger, value_deco, roman, "TIME", "&&OnlineTime&&", 0.85)
 
     # cadre droit : l'hôte sur la moitié gauche, l'invité sur la moitié droite, puis les messages.
     # Positions = fraction du cadre (0,5325 de large), tailles = fraction de l'écran.
@@ -215,5 +219,6 @@ def build(res):
     print(path)
 
 
-for res in ("640", "", "1024"):
-    build(res)
+if __name__ == "__main__":
+    for res in ("640", "", "1024"):
+        build(res)

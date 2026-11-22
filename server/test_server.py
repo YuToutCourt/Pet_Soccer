@@ -90,6 +90,18 @@ class Game:
     def match(self, ptype, body):
         self.sock.sendto(struct.pack(">IB", P.MAGIC, ptype) + body, self.server)
 
+    def league(self, cmd, known=0, **kw):
+        """Commande de ligue (PKT_LEAGUE) ; renvoie la réponse décodée (PKT_LEAGUE_INFO)."""
+        self.seq += 1
+        self.sock.sendto(P.make_league(self.client_id, self.seq, cmd, known, **kw), self.server)
+        while True:
+            data = self.recv(P.PKT_LEAGUE_INFO)
+            if data is None:
+                return None
+            info = P.read_league_info(data)
+            if info["seq"] == self.seq:
+                return info
+
 
 checks = 0
 
@@ -131,6 +143,8 @@ def test_rooms(port):
     check("un jeu inconnu doit d'abord se présenter", info and info["status"] == P.STATUS_UNKNOWN)
     info = a.hello(proto=P.LOBBY_PROTO + 1)
     check("version du dialogue différente : refusé", info and info["status"] == P.STATUS_BAD_PROTO)
+    info = Game(port, 5, "Ancien").hello(proto=3)
+    check("un jeu d'avant la ligue en ligne (dialogue 3) est accepté", info and info["status"] == P.STATUS_OK)
     info = a.hello()
     check("bonjour accepté, pas encore de salon", info and info["status"] == P.STATUS_OK and info["code"] == "")
     for g in (b, c, old):
@@ -453,6 +467,209 @@ def test_persist(port):
     check("le classement aussi", a.top()["total"] >= 2)
 
 
+# ------------------------------------------------------------------ ligue en ligne
+
+LEAGUE_SETTINGS = dict(qualifiers=4, reset=False, points_win=3, points_draw=1, form=2.0, goals_per_minute=0.2,
+                       home_bonus=0.1, strength_effect=0.08, delay=40, half=4)  # délai : 40 « minutes » = 2 s (--league-minute 0.05)
+RATINGS14 = [91.5, 88.0, 93.25, 86.0, 90.0, 89.5, 92.0, 87.25, 90.75, 88.5, 94.0, 85.5, 91.0, 89.0]
+LEAGUE_SAVED = {}
+
+
+def read_save(v):
+    """La sauvegarde d'une ligue (ModLeague.Save) en dictionnaire : de quoi trouver les matchs."""
+    p = [0]
+
+    def get(k=1):
+        out = v[p[0]:p[0] + k]
+        p[0] += k
+        return out if k > 1 else out[0]
+    d = dict(version=get(), points=get(2), reset=get(), qualifiers=get(), teams=get(), player=get(), phase=get(),
+             round=get(), rounds=get(), day=get(), champion=get())
+    get(3 * d["teams"])
+    d["fixtures"] = [get(6) for _ in range(get())]
+    d["seed"] = [get() for _ in range(get())]
+    d["matches"] = [get(11) for _ in range(get())]
+    if p[0] != len(v):
+        raise ValueError("sauvegarde de ligue mal formée")
+    return d
+
+
+def key_sides(save, key):
+    """(équipe qui reçoit, invitée) du match de cette clé."""
+    if key < 10000:
+        f = save["fixtures"][key]
+        return f[1], f[2]
+    m = save["matches"][key - 10000]
+    return (m[6], m[7]) if m[10] & 1 else (m[7], m[6])
+
+
+def league_sync(game, known=0):
+    return game.league(P.LG_SYNC, known)["league"]
+
+
+def test_league(port):
+    a, b, c = Game(port, 81, "Alice"), Game(port, 82, "Bob"), Game(port, 83, "Chloé")
+    nobody = Game(port, 84, "Sans compte", token="court")
+    for g in (a, b, c, nobody):
+        g.hello()
+    check("pas de ligue au départ", league_sync(a) is None)
+    check("sans code et sans ligue ouverte : refusé", c.league(P.LG_JOIN, code="", animal=7)["error"] == P.LGE_UNKNOWN)
+    check("sans compte : pas de ligue",
+          nobody.league(P.LG_CREATE, settings=LEAGUE_SETTINGS, animal=3, ratings=RATINGS14)["error"] == P.LGE_NO_ACCOUNT)
+    check("notes illisibles refusées",
+          a.league(P.LG_CREATE, settings=LEAGUE_SETTINGS, animal=3, ratings=RATINGS14[:5])["error"] == P.LGE_BAD)
+    info = a.league(P.LG_CREATE, settings=LEAGUE_SETTINGS, animal=3, clothes=1, ratings=RATINGS14)
+    lg = info["league"]
+    check("ligue créée (code %s), Alice en est la créatrice, pas encore lancée" % lg["code"],
+          info["error"] == P.LGE_NONE and lg["code"] == "LIGA" and lg["flags"] == P.LGF_OWNER and len(lg["members"]) == 1
+          and lg["members"][0]["animal"] == 3 and lg["members"][0]["clothes"] == 1 and lg["state"] is None)
+    check("créer deux fois rend la même ligue",
+          a.league(P.LG_CREATE, settings=LEAGUE_SETTINGS, animal=3, ratings=RATINGS14)["league"]["code"] == "LIGA")
+    check("code inconnu", c.league(P.LG_JOIN, code="ZZZZ", animal=7)["error"] == P.LGE_UNKNOWN)
+    info = b.league(P.LG_JOIN, code="liga", animal=3)
+    check("Bob entre avec le code en minuscules ; équipe 3 déjà prise : il reçoit la première libre (0)",
+          info["error"] == P.LGE_TEAM_TAKEN and [m["animal"] for m in info["league"]["members"]] == [3, 0])
+    check("Bob ne peut pas prendre l'équipe d'Alice", b.league(P.LG_TEAM, animal=3)["error"] == P.LGE_TEAM_TAKEN)
+    info = b.league(P.LG_TEAM, animal=5, clothes=2)
+    check("Bob prend l'équipe 5", info["error"] == P.LGE_NONE and info["league"]["members"][1]["animal"] == 5)
+    info = c.league(P.LG_JOIN, code="", animal=7)
+    check("Chloé entre sans code dans la dernière ligue ouverte",
+          info["error"] == P.LGE_NONE and info["league"]["code"] == "LIGA")
+    check("sans code une deuxième fois : rien ne change", c.league(P.LG_JOIN, code="", animal=7)["league"]["code"] == "LIGA")
+    members = league_sync(a)["members"]
+    check("Alice voit les trois joueurs connectés, elle-même marquée",
+          len(members) == 3 and all(m["flags"] & P.LGM_ONLINE for m in members) and members[0]["flags"] & P.LGM_ME
+          and members[0]["flags"] & P.LGM_OWNER and not members[1]["flags"] & P.LGM_ME)
+    check("seule la créatrice lance la ligue", b.league(P.LG_START)["error"] == P.LGE_NOT_OWNER)
+    c.league(P.LG_LEAVE)
+    check("Chloé sort avant le départ", league_sync(c) is None and len(league_sync(a)["members"]) == 2)
+
+    info = a.league(P.LG_START)
+    lg = info["league"]
+    save = read_save(lg["state"])
+    check("ligue lancée : 14 équipes, 13 journées, l'état arrive avec Alice comme « joueur » (%d octets)" % lg["size"],
+          lg["flags"] & P.LGF_STARTED and save["teams"] == 14 and save["rounds"] == 13 and save["player"] == 3 == lg["my_team"]
+          and lg["size"] < 1400)
+    check("délai de la journée annoncé", 0 <= lg["deadline"] <= 2)
+    check("état déjà connu : pas renvoyé", league_sync(a, lg["version"])["state"] is None)
+    check("Chloé ne peut plus entrer", c.league(P.LG_JOIN, code="LIGA", animal=7)["error"] == P.LGE_STARTED)
+    check("sans code : la ligue lancée n'est plus ouverte", c.league(P.LG_JOIN, code="", animal=7)["error"] == P.LGE_UNKNOWN)
+    lb = league_sync(b)
+    check("Bob voit la ligue lancée, son équipe comme « joueur »", read_save(lb["state"])["player"] == 5 == lb["my_team"])
+
+    players = {3: a, 5: b}
+    met = False  # Alice et Bob se sont rencontrés
+    rounds = 0
+    deadline_tested = grace_tested = skip_tested = abandon_tested = False
+    playoffs_played = []
+    while True:
+        la, lb = league_sync(a), league_sync(b)
+        save = read_save(la["state"])
+        if save["phase"] == 2:
+            break
+        rounds += 1
+        check("la ligue avance (%d)" % rounds, rounds <= 40) if rounds > 40 else None
+        keys = {3: la["my_key"], 5: lb["my_key"] if lb else -1}
+        if keys[3] >= 0 and keys[3] == keys[5]:
+            # Alice contre Bob : chacun demande à jouer, le serveur ouvre un salon classé, l'équipe qui reçoit en hôte
+            key = keys[3]
+            home, away = key_sides(save, key)
+            check("un match entre joueurs n'est pas envoyé comme un match contre l'IA",
+                  a.league(P.LG_RESULT, key=key, goals_host=1)["error"] == P.LGE_REFUSED)
+            a.league(P.LG_PLAY, key=key)
+            check("Bob voit qu'Alice l'attend", any(m["flags"] & P.LGM_WAITING for m in league_sync(b)["members"]))
+            b.league(P.LG_PLAY, key=key)
+            host, guest = players[home], players[away]
+            ih, ig = host.ask(P.PKT_STATE, b""), guest.ask(P.PKT_STATE, b"")
+            check("match de ligue entre joueurs : salon classé ouvert, l'équipe qui reçoit en hôte",
+                  ih["code"] != "" and ih["code"] == ig["code"] and ih["ranked"] and ih["league"] and ig["league"]
+                  and ih["role"] == P.ROLE_HOST and ig["role"] == P.ROLE_GUEST)
+            gh, gg = (3, 1) if key < 10000 else (2, 1)
+            play(host, guest, 7000 + rounds)
+            host.report(7000 + rounds, P.MATCH_FINISHED, gh, gg)
+            info = guest.report(7000 + rounds, P.MATCH_FINISHED, gh, gg)
+            check("le match compte pour l'Elo en ligne", info["result"]["outcome"] == P.RESULT_RATED and info["elo"] != 1000)
+            after = read_save(league_sync(a)["state"])
+            rec = after["fixtures"][key] if key < 10000 else after["matches"][key - 10000]
+            check("... et pour la ligue : %d-%d enregistré" % (gh, gg),
+                  rec[3:5] == [gh, gg] and rec[5] == 1 if key < 10000 else bool(rec[10] & 2))
+            host.ask(P.PKT_LEAVE)
+            met = True
+            continue
+        if not deadline_tested and save["phase"] == 0:
+            # personne ne joue : la journée se ferme au bout du délai, les matchs des joueurs sont simulés
+            deadline_tested = True
+            time.sleep(3.2)
+            after = read_save(league_sync(a)["state"])
+            check("délai dépassé : la journée %d est fermée, les matchs des joueurs simulés" % (save["round"] + 1),
+                  after["round"] > save["round"] and all(after["fixtures"][k][5] for k in keys.values() if k >= 0))
+            continue
+        if not grace_tested and save["phase"] == 0 and keys[3] >= 0 and keys[5] >= 0:
+            # Alice a lancé son match contre l'IA : le délai l'épargne tant qu'elle joue
+            grace_tested = True
+            a.league(P.LG_PLAY, key=keys[3])
+            b.league(P.LG_RESULT, key=keys[5], goals_host=2, goals_guest=2)
+            time.sleep(2.6)
+            mid = read_save(league_sync(a)["state"])
+            check("délai dépassé pendant le match d'Alice : la journée attend son score", mid["round"] == save["round"])
+            info = a.league(P.LG_RESULT, key=keys[3], goals_host=1, goals_guest=0)
+            again = a.league(P.LG_RESULT, key=keys[3], goals_host=1, goals_guest=0)
+            check("score reçu, journée fermée ; le même score redit n'est pas une erreur",
+                  info["error"] == P.LGE_NONE and read_save(info["league"]["state"])["round"] == save["round"] + 1
+                  and again["error"] == P.LGE_NONE)
+            continue
+        if not skip_tested:
+            skip_tested = True
+            check("seule la créatrice passe une journée", b.league(P.LG_SKIP)["error"] == P.LGE_NOT_OWNER)
+            info = a.league(P.LG_SKIP)
+            after = read_save(info["league"]["state"])
+            check("la créatrice passe la journée : ce qui reste est simulé",
+                  (after["phase"], after["round"], after["day"]) != (save["phase"], save["round"], save["day"]))
+            continue
+        if met and not abandon_tested and save["phase"] == 0:
+            abandon_tested = True
+            b.league(P.LG_LEAVE)
+            check("Bob abandonne : il n'a plus de ligue", league_sync(b) is None)
+            members = league_sync(a)["members"]
+            check("Alice le voit parti ; l'IA joue son équipe", members[1]["flags"] & P.LGM_LEFT and len(members) == 2)
+            check("Bob ne peut pas en créer une autre ici : le code imposé est pris",
+                  b.league(P.LG_CREATE, settings=LEAGUE_SETTINGS, animal=1, ratings=RATINGS14)["error"] == P.LGE_LIMIT)
+            del players[5]
+            continue
+        for team, game in players.items():
+            key = keys[team]
+            if key < 0:
+                continue
+            game.league(P.LG_PLAY, key=key)
+            if key >= 10000:
+                check("nul en playoffs : à rejouer",
+                      game.league(P.LG_RESULT, key=key, goals_host=1, goals_guest=1)["error"] == P.LGE_REPLAY)
+                playoffs_played.append(key)
+            win = (2, 0) if key_sides(save, key)[0] == team else (0, 2)  # le joueur gagne toujours : il va en playoffs
+            info = game.league(P.LG_RESULT, key=key, goals_host=win[0], goals_guest=win[1])
+            if info["error"] != P.LGE_NONE:
+                check("score contre l'IA accepté (erreur %d)" % info["error"], False)
+    final = read_save(league_sync(a)["state"])
+    check("ligue finie : un champion, tous les matchs joués", final["champion"] >= 0 and all(f[5] for f in final["fixtures"]))
+    check("Alice, qui gagne tout, joue les playoffs (%d matchs) et finit championne" % len(playoffs_played),
+          len(playoffs_played) >= 2 and final["champion"] == 3)
+    check("Alice et Bob se sont rencontrés ; délai, épargne, « passer » et abandon vus",
+          met and deadline_tested and grace_tested and skip_tested and abandon_tested)
+    check("la ligue finie reste visible", league_sync(a)["flags"] & P.LGF_OVER)
+    LEAGUE_SAVED["version"] = league_sync(a)["version"]
+
+
+def test_league_persist(port):
+    a = Game(port, 91, "Alice", token="jeton%027d" % 81)
+    a.hello()
+    lg = league_sync(a)
+    check("serveur relancé : la ligue est gardée, dans la même version",
+          lg is not None and lg["version"] == LEAGUE_SAVED["version"] and lg["flags"] & P.LGF_OVER
+          and read_save(lg["state"])["champion"] >= 0)
+    a.league(P.LG_LEAVE)
+    check("Alice quitte la ligue finie", league_sync(a) is None)
+
+
 # ------------------------------------------------------------------ sans réseau : file d'attente par Elo, adresses
 
 def fake_session(lobby, n, elo, addr=None, version=MOD_VERSION):
@@ -539,6 +756,7 @@ test_queue_elo()
 print("--- liaison directe : adresses")
 test_link_scope()
 
+LEAGUE_ARGS = ["--league-code", "LIGA", "--league-minute", "0.05", "--league-grace", "0.1"]
 TMP = tempfile.mkdtemp(prefix="petsoccer-test-")  # la base de test : jamais celle des vrais joueurs
 try:
     for name, test, args in (("salons", test_rooms, []), ("silence", test_timeout, ["--timeout", "2", "--code", "test"]),
@@ -547,7 +765,9 @@ try:
                              ("partie classée", test_ranked, []),
                              ("classé : joueur disparu", test_ranked_lost, ["--lost", "1", "--claim", "2", "--timeout", "3"]),
                              ("classé : jeu relancé", test_takeover, ["--takeover", "1"]),
-                             ("comptes gardés", test_persist, [])):
+                             ("comptes gardés", test_persist, []),
+                             ("ligue en ligne", test_league, LEAGUE_ARGS),
+                             ("ligue gardée", test_league_persist, LEAGUE_ARGS)):
         print("--- " + name)
         port = free_port()
         server = start_server(port, *args)

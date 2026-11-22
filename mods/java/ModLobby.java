@@ -11,7 +11,7 @@ import java.nio.ByteBuffer;
 // redit tout ce que le joueur veut (« je crée un salon », « je suis dans ce salon avec cette équipe »), et le
 // serveur répond à chacun par l'état du salon. Une perte se rattrape donc au paquet suivant.
 class ModLobby {
-   static final int _LOBBY_PROTO = 3; // version du dialogue avec le serveur (server/protocol.py)
+   static final int _LOBBY_PROTO = 4; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne
    // jeu -> serveur
    static final int _PKT_FIRST = 16;
    static final int _PKT_HELLO = 16;
@@ -52,6 +52,7 @@ class ModLobby {
    static final int _WANT_CREATE = 1;
    static final int _WANT_JOIN = 2;
    static final int _WANT_QUEUE = 3; // partie rapide
+   static final int _WANT_LEAGUE = 4; // ligue en ligne : j'attends le salon que le serveur ouvre pour mon match contre un ami
    static final int _ROLE_HOST = 1;
    static final int _ROLE_GUEST = 2;
    // pourquoi le joueur n'est pas (ou plus) dans un salon ; 1..3 = refus du serveur (JOIN_* de protocol.py)
@@ -156,6 +157,7 @@ class ModLobby {
    static boolean m_bPeerHere = false;
    static String m_sPeerName = "";
    static int m_nQueueRange = 0; // file d'attente : écart d'Elo accepté par le serveur en ce moment
+   static boolean m_bLeagueRoom = false; // salon ouvert par le serveur pour un match de la ligue en ligne (classé)
 
    // --- liaison directe (ModNet.PunchFrame) : ce que le serveur dit de l'autre joueur du salon ---
    static byte[] m_tLocalIp = new byte[4]; // mon adresse sur mon réseau local, annoncée au serveur
@@ -504,6 +506,7 @@ class ModLobby {
       }
 
       Log("ferme");
+      ModOnlineLeague.OnClose();
       m_nNet = _NET_OFF;
       m_cServer = null;
       m_nWant = _WANT_NONE;
@@ -518,6 +521,7 @@ class ModLobby {
       m_nRole = 0;
       m_bReady = false;
       m_bRanked = false;
+      m_bLeagueRoom = false;
       m_nMatchId = 0;
       ClearPeer();
    }
@@ -580,6 +584,39 @@ class ModLobby {
 
       Want(_WANT_NONE, "");
       m_bLeaveNeeded = true;
+   }
+
+   // Ligue en ligne : j'attends que le serveur ouvre le salon de mon match contre un ami (ModOnlineLeague redit
+   // LG_PLAY). Sans cette demande, le jeu quitterait ce salon dès qu'il l'apprend.
+   static void WantLeague() {
+      if (IsOpen() && m_nWant != _WANT_LEAGUE) {
+         Want(_WANT_LEAGUE, "");
+      }
+   }
+
+   // Plus d'attente : on quitte le salon de la ligue, ou on cesse de l'attendre
+   static void StopLeague() {
+      if (m_sRoom != null) {
+         Leave();
+      } else if (m_nWant == _WANT_LEAGUE) {
+         Want(_WANT_NONE, "");
+      }
+   }
+
+   // Mon équipe dans le salon de la ligue : celle de la ligue, sans choix possible. Prêt tout de suite.
+   static void SetLeagueTeam(int nAnimal, int nClothes) {
+      if (!IsValidTeam(nAnimal, nClothes)) {
+         return;
+      }
+
+      if (m_nMyAnimal != nAnimal || m_nMyClothes != nClothes || !m_bReady) {
+         m_nMyAnimal = nAnimal;
+         m_nMyClothes = nClothes;
+         m_sMyTactics = ModTactics.ToLine(ModTactics.GetComposition(nAnimal));
+         Log("ligue : equipe " + nAnimal + " tenue " + nClothes + ", pret");
+      }
+
+      SetReady(true);
    }
 
    private static void Want(int nWant, String sCode) {
@@ -695,6 +732,10 @@ class ModLobby {
    static int GetHalfSeconds() {
       if (IsGuest()) {
          return m_nPeerHalf;
+      }
+
+      if (m_bLeagueRoom) {
+         return 60 * Math.max(1, ModOnlineLeague.m_nHalf); // celle choisie à la création de la ligue
       }
 
       return m_bRanked ? 60 * m_nRankedHalf : 60 * CoreLogic._HALF_TIMES[m_nHalfIndex];
@@ -814,7 +855,11 @@ class ModLobby {
       CoreLogic.m_cTeamDataRight = new TeamData(ETeams.GetTeamData(tTeams[2]));
       CoreLogic.m_cTeamDataRight.SetClothesId(tTeams[3]);
       CoreLogic.m_nNextLevel = nLevel;
-      Log("match " + nMatchId + (bHost ? " (hote)" : " (invite)") + (m_bRanked ? " classe" : "") + " : equipe " + tTeams[0] + " tenue " + tTeams[1] + " contre equipe "
+      if (m_bLeagueRoom) {
+         ModOnlineLeague.OnFriendMatchBegin(bHost); // retour à l'écran de la ligue, but en or en playoffs
+      }
+
+      Log("match " + nMatchId + (bHost ? " (hote)" : " (invite)") + (m_bRanked ? " classe" : "") + (m_bLeagueRoom ? " (ligue)" : "") + " : equipe " + tTeams[0] + " tenue " + tTeams[1] + " contre equipe "
          + tTeams[2] + " tenue " + tTeams[3] + ", stade " + nLevel + ", mi-temps " + nHalf + " s");
       ModNet.StartMatch(bHost, m_cServer, nHalf);
       SoccerGame.game.GetCommentator().HideNow();
@@ -823,7 +868,7 @@ class ModLobby {
 
    // ------------------------------------------------------------------ envoi
 
-   private static ByteBuffer Begin(int nType) {
+   static ByteBuffer Begin(int nType) {
       ByteBuffer b = m_cOut;
       b.clear();
       b.putInt(ModNet._MAGIC);
@@ -833,7 +878,7 @@ class ModLobby {
       return b;
    }
 
-   private static void Send(ByteBuffer b) throws java.io.IOException {
+   static void Send(ByteBuffer b) throws java.io.IOException {
       b.flip();
       ModNet.m_cChannel.send(b, m_cServer);
    }
@@ -1030,12 +1075,13 @@ class ModLobby {
 
    // Appelé à chaque frame par ModNet.OnFrame tant que le canal vers le serveur est ouvert
    static void OnFrame(long lNow) throws java.io.IOException {
-      if (ModNet.IsOnline()) {
+      if (ModNet.IsOnline() || ModOnlineLeague.m_bMatch) {
          AutoMatchFrame(lNow);
       }
 
       if (m_nNet == _NET_ONLINE && !m_bHelloNeeded) {
          ReportFrame(lNow);
+         ModOnlineLeague.Frame(lNow); // ligue en ligne : seulement devant ses écrans, ou pour finir une commande
          // classement : relu toutes les 5 s tant que le joueur est devant l'écran « en ligne », hors salon
          if (m_bMenu && m_sRoom == null && !ModNet.IsOnline() && lNow >= m_lNextTop) {
             m_lNextTop = lNow + 5000L;
@@ -1059,6 +1105,9 @@ class ModLobby {
             SendHello(); // rien à demander : on reste connu du serveur
             m_lNextSend = lNow + 1000L;
          }
+      } else if (m_sRoom == null && m_nWant == _WANT_LEAGUE) {
+         SendHello(); // le salon viendra du serveur : on reste connu de lui
+         m_lNextSend = lNow + 1000L;
       } else if (m_sRoom == null) {
          if (m_nWant == _WANT_CREATE) {
             Send(Begin(_PKT_CREATE));
@@ -1099,6 +1148,8 @@ class ModLobby {
          ReadPeer(b);
       } else if (nType == _PKT_RANKS) {
          ReadRanks(b);
+      } else if (nType == ModOnlineLeague._PKT_LEAGUE_INFO) {
+         ModOnlineLeague.ReadInfo(b);
       }
    }
 
@@ -1230,7 +1281,7 @@ class ModLobby {
 
       m_bMayResume = false;
       if (m_sRoom == null) {
-         Log("dans le salon " + sCode + (nRole == _ROLE_HOST ? " (hote)" : " (invite)") + ((nFlags & 2) != 0 ? ", partie classee" : ""));
+         Log("dans le salon " + sCode + (nRole == _ROLE_HOST ? " (hote)" : " (invite)") + ((nFlags & 2) != 0 ? ", partie classee" : "") + ((nFlags & 4) != 0 ? ", ligue" : ""));
          m_nOut = _OUT_NONE;
          m_lNextSend = 0L;
       }
@@ -1238,6 +1289,7 @@ class ModLobby {
       m_sRoom = sCode;
       m_nRole = nRole;
       m_bRanked = (nFlags & 2) != 0;
+      m_bLeagueRoom = (nFlags & 4) != 0; // INFO_LEAGUE
       m_nPeerElo = nPeerElo;
       boolean bHere = nMembers >= 2;
       if (bHere != m_bPeerHere) {
@@ -1340,8 +1392,12 @@ class ModLobby {
 
    // Pendant un match lancé par NetAuto : quitte l'écran de fin au bout de 5 s, pour revenir au salon
    static void AutoMatchFrame(long lNow) {
-      if (m_nAuto != 1 && m_nAuto != 2 && m_nAuto != 4) {
+      if (m_nAuto != 1 && m_nAuto != 2 && m_nAuto != 4 && m_nAuto != 5 && m_nAuto != 6) {
          return;
+      }
+
+      if (ModOnlineLeague.m_bMatch) {
+         ModOnlineLeague.AutoMatchFrame(lNow); // ligue en ligne : match contre l'IA joué tout seul
       }
 
       SoccerModule cModule = SoccerGame.activeLevelModule;

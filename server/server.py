@@ -7,13 +7,15 @@ code ; ensuite le serveur recopie les paquets de l'un vers l'autre, donc aucun d
 port chez lui. Quand c'est possible, les deux jeux se parlent ensuite en direct (le serveur donne à
 chacun l'adresse de l'autre) et le relais ne sert plus que de secours. La partie rapide réunit deux
 joueurs d'Elo proche dans un salon classé : le résultat change leur Elo en ligne, gardé avec les
-comptes dans un fichier SQLite (--db).
+comptes dans un fichier SQLite (--db). Ce fichier garde aussi les ligues en ligne (leagues.py) : plusieurs
+amis dans une ligue à 14, les autres équipes à l'IA, une journée fermée au bout d'un délai.
 Un seul port UDP, bibliothèque standard seule. Détails dans notes/online.md.
 
   --lag, --jitter, --loss : simulent une mauvaise connexion sur les paquets relayés (tests). Ils
                             coupent la liaison directe, comme --no-direct.
   --queue-range, --queue-grow : écart d'Elo accepté dans la file d'attente, et sa hausse par seconde.
   --code : tous les salons créés portent ce code (tests automatiques : un seul salon à la fois).
+  --league-code : de même pour les ligues. --league-minute : secondes que dure une « minute » de délai (tests).
 """
 import argparse
 import heapq
@@ -27,6 +29,7 @@ import time
 
 import protocol as P
 from rooms import Lobby
+from leagues import Leagues
 from store import Store, clean_name
 
 
@@ -84,6 +87,8 @@ class Server:
         role = P.ROLE_HOST if room.host is session else P.ROLE_GUEST
         if room.ranked:
             own["flags"] |= P.INFO_RANKED
+        if room.league is not None:
+            own["flags"] |= P.INFO_LEAGUE
         key, peer_addr, peer_local = self.lobby.link(session)
         return P.make_info(seq, P.STATUS_OK, room.code, role, room.members(), peer.name if peer else "",
                            peer_elo=peer.player.elo if peer and peer.player else 0,
@@ -129,13 +134,13 @@ class Server:
             return
 
         if ptype not in (P.PKT_HELLO, P.PKT_CREATE, P.PKT_JOIN, P.PKT_LEAVE, P.PKT_STATE, P.PKT_QUEUE, P.PKT_MATCH,
-                         P.PKT_TOP):
+                         P.PKT_TOP, P.PKT_LEAGUE):
             return
         client_id, seq = P.read_lobby_head(data)
 
         if ptype == P.PKT_HELLO:
             proto, mod_version, name, token, local_addr = P.read_hello(data)
-            if proto != P.LOBBY_PROTO:
+            if proto not in P.LOBBY_PROTOS:
                 self.send(P.make_info(seq, P.STATUS_BAD_PROTO), addr)
                 return
             name = clean_name(name)
@@ -150,6 +155,10 @@ class Server:
             self.send(P.make_info(seq, P.STATUS_UNKNOWN), addr)
             return
         lobby.touch(session, addr, now)
+
+        if ptype == P.PKT_LEAGUE:
+            self.league(session, seq, data, now)
+            return
 
         join_error = P.JOIN_OK
         if ptype == P.PKT_CREATE:
@@ -169,6 +178,26 @@ class Server:
         elif ptype == P.PKT_TOP:
             self.send(self.ranks(session), addr)
         self.send(self.info(session, seq, join_error), addr)
+
+    def presence(self, player_id):
+        """Drapeaux LGM_* d'un membre d'une ligue : connecté, dans un salon."""
+        session = self.lobby.by_player.get(player_id)
+        if session is None or self.lobby.now - session.last_seen > 10.0:
+            return 0
+        return P.LGM_ONLINE | (P.LGM_BUSY if session.room is not None else 0)
+
+    def league(self, session, seq, data, now):
+        """PKT_LEAGUE : une commande de la ligue en ligne, et la ligue du joueur en réponse."""
+        leagues = self.lobby.leagues
+        cmd, known, args = P.read_league(data)
+        if leagues is None:
+            self.send(P.make_league_info(seq, P.LGE_LIMIT), session.addr)
+            return
+        wall = leagues.clock()
+        error = leagues.command(session.player, session.name, cmd, args, wall)
+        if cmd == P.LG_PLAY and error == P.LGE_NONE:
+            error = self.lobby.league_play(session, now)
+        self.send(P.make_league_info(seq, error, leagues.view(session.player, known, wall, self.presence)), session.addr)
 
     def run(self):
         next_expire = next_stats = time.monotonic()
@@ -200,6 +229,8 @@ class Server:
             if now >= next_expire:
                 next_expire = now + 1.0
                 self.lobby.expire(now)
+                if self.lobby.leagues is not None:
+                    self.lobby.leagues.tick(self.lobby.leagues.clock(), self.lobby.league_busy())
             if self.verbose and now >= next_stats:
                 next_stats = now + 10.0
                 if self.stats["recv"]:
@@ -240,6 +271,9 @@ def main():
     ap.add_argument("--takeover", type=float, default=3, help="secondes de silence avant qu'un jeu relancé reprenne la place de l'ancien")
     ap.add_argument("--queue-range", type=float, default=100, help="partie rapide : écart d'Elo accepté en entrant dans la file d'attente")
     ap.add_argument("--queue-grow", type=float, default=10, help="partie rapide : points d'Elo ajoutés à cet écart par seconde d'attente")
+    ap.add_argument("--league-code", default=None, help="code imposé aux ligues créées (tests : une seule ligue)")
+    ap.add_argument("--league-minute", type=float, default=60, help="secondes que dure une minute de délai d'une journée de ligue (tests)")
+    ap.add_argument("--league-grace", type=float, default=20, help="minutes pendant lesquelles un match de ligue contre l'IA en cours échappe au délai")
     ap.add_argument("--no-direct", action="store_true", help="tout le match passe par le serveur : pas de liaison directe entre les jeux")
     ap.add_argument("-v", "--verbose", action="store_true", help="statistiques toutes les 10 s, paquets illisibles")
     args = ap.parse_args()
@@ -251,6 +285,8 @@ def main():
                   queue_range=args.queue_range, queue_grow=args.queue_grow,
                   # un retard ou des pertes simulés ne touchent que les paquets relayés : pas de liaison directe alors
                   direct=not (args.no_direct or args.lag or args.jitter or args.loss))
+    lobby.leagues = Leagues(store.db, fixed_code=args.league_code.strip().upper() if args.league_code else None,
+                            delay_scale=args.league_minute, grace=args.league_grace * 60)
     sock = open_socket(args.host, args.port)
     server = Server(sock, lobby, args.lag / 1000.0, args.jitter / 1000.0, args.loss / 100.0, args.verbose)
     extras = []
@@ -263,7 +299,8 @@ def main():
     if code:
         extras.append("code imposé %s" % code)
     server.log("serveur Pet Soccer sur le port UDP %d%s" % (args.port, " (" + ", ".join(extras) + ")" if extras else ""))
-    server.log("comptes et Elo : %s (%d joueurs classés)" % (args.db, store.total()))
+    lobby.leagues.log = server.log
+    server.log("comptes et Elo : %s (%d joueurs classés, %d ligues en cours)" % (args.db, store.total(), len(lobby.leagues.by_code)))
     try:
         server.run()
     except KeyboardInterrupt:

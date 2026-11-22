@@ -17,7 +17,11 @@ public class MenuChooseTeamColors extends SoccerUserInterface {
 
    void OnOK() {
       this.m_cTeamData.SetClothesId(this.m_nClothes);
-      if (ModLobby.IsMenu()) {
+      if (ModLobby.IsMenu() && ModOnlineLeague.m_bPickTeam) {
+         // [mod] ligue en ligne : l'équipe choisie part au serveur (avant le départ de la ligue)
+         ModOnlineLeague.OnTeamChosen(this.m_nAnimal, this.m_nClothes);
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE);
+      } else if (ModLobby.IsMenu()) {
          // [mod] en ligne : chacun ne choisit que son équipe, puis retourne au salon
          ModLobby.SetMyTeam(this.m_nAnimal, this.m_nClothes);
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE);

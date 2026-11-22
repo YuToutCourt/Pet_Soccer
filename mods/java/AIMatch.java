@@ -1720,6 +1720,8 @@ public class AIMatch extends Match {
       ModSurvival.OnMatchEnd(this);
       // [mod] ligue : résultat du match du joueur (après ModStats, qui lit le match du titre)
       ModLeagueMode.OnMatchEnd(this);
+      // [mod] ligue en ligne : score du match contre l'IA, envoyé au serveur
+      ModOnlineLeague.OnMatchEnd(this);
       this.ClearWeatherEvents();
       Commentator cComm = SoccerGame.game.GetCommentator();
       if (!CoreLogic.m_bDemo) {

@@ -43,6 +43,7 @@ class ModLeague {
    int[] m_tLots = new int[0]; // tirage au sort, dernier critère du classement
    int m_nPlayer = -1;
    int m_nPhase = _PHASE_LEAGUE;
+   boolean[] m_tHuman = null; // ligue en ligne : équipes jouées par un joueur (ModOnlineLeague), pas sauvegardé
 
    // ligue
    int m_nRounds = 0;
@@ -709,6 +710,11 @@ class ModLeague {
       }
 
       return -1;
+   }
+
+   // ligue en ligne : cette équipe est jouée par un autre joueur que moi
+   boolean IsOtherHuman(int nTeam) {
+      return this.m_tHuman != null && nTeam >= 0 && nTeam < this.m_tHuman.length && this.m_tHuman[nTeam] && nTeam != this.m_nPlayer;
    }
 
    int FindTeam(int nAnimal) {

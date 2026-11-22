@@ -419,6 +419,11 @@ public class SoccerGame extends Game {
                ModNet.m_nDebugHalf = key.GetIParam(0);
             }
 
+            // [mod] ligue en ligne : but en or à égalité dans tout match entre amis, pour les tests (!NetGolden(i))
+            if (key.Equals("NetGolden")) {
+               ModOnlineLeague.m_bDebugGolden = key.GetIParam(0) == 1;
+            }
+
             // [mod] en ligne, tests du salon (notes/online.md) : adresse du serveur (!NetServer(s,i)),
             // salon créé ou rejoint sans souris (!NetAuto(i), !NetCode(s)), équipe (!NetTeam(i,i)), nombre de matchs (!NetMatches(i))
             if (key.Equals("NetServer")) {

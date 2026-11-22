@@ -8,7 +8,8 @@ import socket
 import struct
 
 MAGIC = 0x50534E31  # "PSN1"
-LOBBY_PROTO = 3  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO)
+LOBBY_PROTO = 4  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne
+LOBBY_PROTOS = (3, 4)  # versions acceptées : la 3 n'a pas la ligue, le reste du dialogue est le même
 
 # Paquets du match (ModNet) : le serveur les recopie tels quels vers l'autre joueur du salon
 PKT_INPUT = 1
@@ -26,11 +27,53 @@ PKT_STATE = 20  # + ce que le joueur montre à l'autre (équipe, prêt, tactique
 PKT_QUEUE = 21  # partie rapide : entre dans la file d'attente (répété tant que le joueur attend)
 PKT_MATCH = 22  # + numéro du match (int), phase (octet), buts de l'hôte (octet), buts de l'invité (octet), drapeaux (octet)
 PKT_TOP = 23  # demande le classement
+PKT_LEAGUE = 24  # ligue en ligne : + commande (octet LG_*), version de l'état de la ligue que le jeu a déjà (int), suite
 
 # Serveur -> jeu
 PKT_INFO = 32  # réponse à chaque paquet ci-dessus
 PKT_PEER = 33  # le contenu du dernier PKT_STATE de l'autre joueur
 PKT_RANKS = 34  # le classement, en réponse à PKT_TOP
+PKT_LEAGUE_INFO = 35  # réponse à PKT_LEAGUE : la ligue du joueur (make_league_info)
+
+# PKT_LEAGUE, commandes. Chacune est redite par le jeu jusqu'à ce que la réponse la confirme : elles ne font
+# rien de plus quand on les répète.
+LG_SYNC = 0  # rien à demander, je regarde ma ligue
+LG_CREATE = 1  # + réglages (league_settings), équipe (octet), tenue (octet), notes des équipes (octet n, n shorts x100)
+LG_JOIN = 2  # + code (chaîne), équipe, tenue
+LG_TEAM = 3  # + équipe, tenue (avant le départ)
+LG_START = 4  # le créateur lance la ligue
+LG_LEAVE = 5  # quitte la ligue ; après le départ, l'IA reprend son équipe
+LG_RESULT = 6  # + clé du match (int), buts de l'équipe qui reçoit, de l'invitée (octets) : match contre l'IA
+LG_PLAY = 7  # + clé du match (int) : je joue ce match (contre l'IA) ou j'attends l'autre joueur (redit 3 fois par seconde)
+LG_SKIP = 8  # le créateur ferme la journée tout de suite : ce qui reste est simulé
+
+# PKT_LEAGUE_INFO, issue de la commande
+LGE_NONE = 0
+LGE_UNKNOWN = 1  # aucune ligue avec ce code
+LGE_STARTED = 2  # la ligue a déjà commencé : on n'y entre plus
+LGE_FULL = 3  # toutes les équipes sont prises
+LGE_TEAM_TAKEN = 4  # équipe déjà prise : une autre a été donnée
+LGE_NOT_OWNER = 5  # seul le créateur peut le faire
+LGE_NO_ACCOUNT = 6  # pas de compte en ligne (jeton)
+LGE_REFUSED = 7  # ce match n'est pas à jouer (déjà joué, simulé après le délai...)
+LGE_LIMIT = 8  # le serveur n'accepte plus de ligue
+LGE_VERSION = 9  # l'autre joueur n'a pas la même version du mod
+LGE_REPLAY = 10  # nul en playoffs : le match est à rejouer
+LGE_BAD = 11  # demande illisible (réglages, notes)
+
+# PKT_LEAGUE_INFO, drapeaux de la ligue
+LGF_OWNER = 1  # je l'ai créée
+LGF_STARTED = 2
+LGF_OVER = 4
+# ... et d'un membre
+LGM_ONLINE = 1  # connecté au serveur
+LGM_ME = 2
+LGM_OWNER = 4
+LGM_LEFT = 8  # a abandonné : l'IA joue son équipe
+LGM_WAITING = 16  # attend de jouer contre moi (notre match de la journée)
+LGM_BUSY = 32  # dans un salon ou un match
+
+INFO_LEAGUE = 4  # PKT_INFO : le salon est un match de ligue en ligne (créé par le serveur, voir rooms.Lobby.league_play)
 
 # PKT_INFO, état
 STATUS_OK = 0
@@ -132,7 +175,7 @@ def read_hello(data):
     """Renvoie (version du dialogue, version du mod, nom, jeton, adresse locale). Un jeu d'une autre version
     n'est lu que jusqu'à sa version : la suite peut avoir un autre format."""
     proto, mod_version = struct.unpack_from(">hi", data, LOBBY_HEAD_SIZE)
-    if proto != LOBBY_PROTO:
+    if proto not in LOBBY_PROTOS:
         return proto, mod_version, "", "", NO_ADDR
     name, off = get_string(data, LOBBY_HEAD_SIZE + 6)
     token, off = get_string(data, off)
@@ -174,6 +217,85 @@ def make_ranks(my_rank, total, rows):
     return out
 
 
+# --- ligue en ligne ---
+
+_LEAGUE_SETTINGS = struct.Struct(">BBBBhhhhiB")
+# qualifiés, revanche en grande finale, points victoire, points nul, forme x100, buts par minute x1000, bonus à domicile
+# x1000, effet de la note x1000, délai d'une journée en minutes, minutes d'une mi-temps
+
+
+def put_zigzag(out, n):
+    """Entier en varint zigzag : 1 octet de -64 à 63, 2 jusqu'à ±8191..."""
+    n = (n << 1) ^ (n >> 31)
+    n &= 0xFFFFFFFF
+    while n >= 0x80:
+        out.append((n & 0x7F) | 0x80)
+        n >>= 7
+    out.append(n)
+
+
+def get_zigzag(data, off):
+    n = shift = 0
+    while True:
+        if off >= len(data) or shift > 28:
+            raise ValueError("entier tronqué")
+        b = data[off]
+        off += 1
+        n |= (b & 0x7F) << shift
+        shift += 7
+        if not b & 0x80:
+            break
+    return (n >> 1) ^ -(n & 1), off
+
+
+def read_league(data):
+    """Renvoie (commande, version connue, arguments) d'un PKT_LEAGUE."""
+    cmd = data[LOBBY_HEAD_SIZE]
+    (known,) = struct.unpack_from(">i", data, LOBBY_HEAD_SIZE + 1)
+    off = LOBBY_HEAD_SIZE + 5
+    args = {}
+    if cmd == LG_CREATE:
+        q, reset, pw, pd, form, gpm, home, strength, delay, half = _LEAGUE_SETTINGS.unpack_from(data, off)
+        off += _LEAGUE_SETTINGS.size
+        args["settings"] = dict(qualifiers=q, reset=bool(reset), points_win=pw, points_draw=pd, form=form / 100.0,
+                                goals_per_minute=gpm / 1000.0, home_bonus=home / 1000.0, strength_effect=strength / 1000.0,
+                                delay=delay, half=half)
+        args["animal"], args["clothes"], n = data[off], data[off + 1], data[off + 2]
+        off += 3
+        args["ratings"] = [r / 100.0 for r in struct.unpack_from(">%dh" % n, data, off)]
+    elif cmd == LG_JOIN:
+        args["code"], off = get_string(data, off)
+        args["animal"], args["clothes"] = data[off], data[off + 1]
+    elif cmd == LG_TEAM:
+        args["animal"], args["clothes"] = data[off], data[off + 1]
+    elif cmd == LG_RESULT:
+        args["key"], args["goals_host"], args["goals_guest"] = struct.unpack_from(">iBB", data, off)
+    elif cmd == LG_PLAY:
+        (args["key"],) = struct.unpack_from(">i", data, off)
+    return cmd, known, args
+
+
+def make_league_info(seq, error, view=None):
+    """view : ce que voit le joueur de sa ligue (leagues.Leagues.view), None s'il n'en a pas.
+    L'état de la ligue (ModLeague.Save) ne part que si le jeu ne l'a pas déjà dans cette version."""
+    out = bytearray(_HEAD.pack(MAGIC, PKT_LEAGUE_INFO) + struct.pack(">iBB", seq, error, 1 if view else 0))
+    if not view:
+        return bytes(out)
+    s = view["settings"]
+    out += put_string(view["code"]) + struct.pack(">Bi", view["flags"], view["version"])
+    out += _LEAGUE_SETTINGS.pack(s["qualifiers"], int(s["reset"]), s["points_win"], s["points_draw"], int(round(s["form"] * 100)),
+                                 int(round(s["goals_per_minute"] * 1000)), int(round(s["home_bonus"] * 1000)),
+                                 int(round(s["strength_effect"] * 1000)), s["delay"], s["half"])
+    out += struct.pack(">ibiB", view["deadline"], view["my_team"], view["my_key"], len(view["members"]))
+    for m in view["members"]:
+        out += put_string(m["name"]) + bytes([m["animal"], m["clothes"], m["flags"]])
+    state = view.get("state")
+    out += struct.pack(">h", len(state) if state else 0)
+    for n in state or ():
+        put_zigzag(out, n)
+    return bytes(out)
+
+
 # --- côté jeu : sert aux tests (server/test_server.py) ---
 
 def make_lobby(ptype, client_id, seq, body=b""):
@@ -202,6 +324,7 @@ def read_info(data):
     (queue_range,) = struct.unpack_from(">h", data, off)
     return dict(key=key, peer_addr=peer_addr, peer_local=peer_local, queue_range=queue_range, seq=seq, status=status, code=code, role=role, members=members, peer_name=peer_name,
                 join_error=join_error, queued=bool(flags & INFO_QUEUED), ranked=bool(flags & INFO_RANKED),
+                league=bool(flags & INFO_LEAGUE),
                 elo=elo, games=games, peer_elo=peer_elo, online=online,
                 result=dict(match=match_id, outcome=outcome, how=how, delta=delta))
 
@@ -217,3 +340,51 @@ def read_ranks(data):
         off += 8
         rows.append(dict(rank=rank, name=name, elo=elo, wins=wins, draws=draws, losses=losses))
     return dict(my_rank=my_rank, total=total, rows=rows)
+
+
+def make_league(client_id, seq, cmd, known=0, settings=None, animal=0, clothes=0, ratings=(), code="", key=0,
+                goals_host=0, goals_guest=0):
+    body = bytes([cmd]) + struct.pack(">i", known)
+    if cmd == LG_CREATE:
+        s = settings
+        body += _LEAGUE_SETTINGS.pack(s["qualifiers"], int(s["reset"]), s["points_win"], s["points_draw"], int(round(s["form"] * 100)),
+                                      int(round(s["goals_per_minute"] * 1000)), int(round(s["home_bonus"] * 1000)),
+                                      int(round(s["strength_effect"] * 1000)), s["delay"], s["half"])
+        body += bytes([animal, clothes, len(ratings)]) + struct.pack(">%dh" % len(ratings), *[int(round(r * 100)) for r in ratings])
+    elif cmd == LG_JOIN:
+        body += put_string(code) + bytes([animal, clothes])
+    elif cmd == LG_TEAM:
+        body += bytes([animal, clothes])
+    elif cmd == LG_RESULT:
+        body += struct.pack(">iBB", key, goals_host, goals_guest)
+    elif cmd == LG_PLAY:
+        body += struct.pack(">i", key)
+    return make_lobby(PKT_LEAGUE, client_id, seq, body)
+
+
+def read_league_info(data):
+    seq, error, here = struct.unpack_from(">iBB", data, HEAD_SIZE)
+    out = dict(seq=seq, error=error, league=None)
+    if not here:
+        return out
+    code, off = get_string(data, HEAD_SIZE + 6)
+    flags, version = struct.unpack_from(">Bi", data, off)
+    off += 5
+    q, reset, pw, pd, form, gpm, home, strength, delay, half = _LEAGUE_SETTINGS.unpack_from(data, off)
+    off += _LEAGUE_SETTINGS.size
+    deadline, my_team, my_key, count = struct.unpack_from(">ibiB", data, off)
+    off += 10
+    members = []
+    for _ in range(count):
+        name, off = get_string(data, off)
+        members.append(dict(name=name, animal=data[off], clothes=data[off + 1], flags=data[off + 2]))
+        off += 3
+    (n,) = struct.unpack_from(">h", data, off)
+    off += 2
+    state = []
+    for _ in range(n):
+        v, off = get_zigzag(data, off)
+        state.append(v)
+    out["league"] = dict(code=code, flags=flags, version=version, qualifiers=q, delay=delay, half=half, deadline=deadline,
+                         my_team=my_team, my_key=my_key, members=members, state=state or None, size=len(data))
+    return out

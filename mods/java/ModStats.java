@@ -408,8 +408,8 @@ class ModStats {
          v[_SURVIVAL_WAVE] = ModSurvival.GetWave();
       }
 
-      if (ModLeagueMode.IsActive()) {
-         v[_MODE] = _MODE_LEAGUE; // [mod] ligue
+      if (ModLeagueMode.IsActive() || ModOnlineLeague.m_bMatch) {
+         v[_MODE] = _MODE_LEAGUE; // [mod] ligue, solo ou en ligne
       }
 
       v[_MY_TEAM] = cMine.m_nAnimalType;

@@ -13,6 +13,9 @@
     -Ranked  : comme -Server, mais par la « partie rapide » : les deux jeux entrent dans la file d'attente,
                le serveur les réunit dans un salon classé (hôte tiré au sort) et le match compte pour l'Elo
                en ligne. -Bot et -HostBot valent alors pour les deux jeux.
+    -League  : ligue en ligne (notes\online-league.md), sans souris : game_dev crée la ligue TEST, game_dev_b la
+               rejoint, game_dev la lance quand les deux y sont, puis chacun ouvre le classement. Les ligues vont
+               dans build\online-test.db, avec les comptes.
 
   -Bot     : le client joue tout seul (utile pour regarder sans toucher au clavier)
   -HostBot : l'hôte fait une passe toutes les 2 s. À ajouter quand personne n'est au clavier de l'hôte : une
@@ -28,6 +31,8 @@
   -NoDirect : avec -Server, -Menus ou -Ranked, pas de liaison directe : tout le match passe par le serveur.
              -Lag et -Loss la coupent aussi, puisqu'ils n'agissent que sur les paquets relayés.
   -CutDirect : la liaison directe casse 20 s après le début du match : les jeux doivent revenir au relais
+  -NoCode  : avec -League, game_dev_b rejoint sans code (la dernière ligue ouverte)
+  -Golden  : avec -League, but en or à égalité dans les matchs entre les deux jeux, même hors playoffs
   -NoSkip  : les jeux automatiques (-Bot, -HostBot) ne cliquent pas « continuer » à la mi-temps : la pause va
              au bout de son temps (HalfBreak de online.scr, 30 s)
 
@@ -41,7 +46,7 @@
 #>
 param([switch]$Bot, [switch]$HostBot, [int]$Port = 7777, [int]$Half = 0, [switch]$Server, [switch]$Menus,
       [switch]$Ranked, [int]$Lag = 0, [int]$Loss = 0, [int]$Matches = 1, [string]$TeamA = '', [string]$TeamB = '',
-      [int]$QuitAt = 0, [switch]$NoDirect, [switch]$NoSkip, [switch]$CutDirect)
+      [int]$QuitAt = 0, [switch]$NoDirect, [switch]$NoSkip, [switch]$CutDirect, [switch]$League, [switch]$Golden, [switch]$NoCode)
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -52,14 +57,14 @@ $nl   = "`r`n"
 
 if (-not (Test-Path $DevB)) { throw 'game_dev_b manque : lance d''abord mods\build.ps1 -Second' }
 if (Get-Process 'PetSoccer.bum' -ErrorAction SilentlyContinue) { throw 'Pet Soccer est ouvert : ferme le jeu d''abord.' }
-if (@($Server, $Menus, $Ranked | Where-Object { $_ }).Count -gt 1) { throw '-Server, -Menus et -Ranked ne vont pas ensemble.' }
+if (@($Server, $Menus, $Ranked, $League | Where-Object { $_ }).Count -gt 1) { throw '-Server, -Menus, -Ranked et -League ne vont pas ensemble.' }
 
 function Write-DebugConf([string]$Dir, [string[]]$Lines) {
     # Les déclarations !Mot(types) doivent précéder les valeurs, sinon le parseur les ignore
     $decl = '!Debug(i)', '!ShowFPS(i)', '!AllTeams(i)', '!AllExtras(i)', '!MenuOn(i)', '!FirstLevel(i)',
             '!NetHost(i)', '!NetJoin(s,i)', '!NetBot(i)', '!NetHalf(i)',
             '!NetServer(s,i)', '!NetAuto(i)', '!NetCode(s)', '!NetTeam(i,i)', '!NetMatches(i)',
-            '!NetName(s)', '!NetQuit(i)', '!NetDirect(i)', '!NetNoSkip(i)'
+            '!NetName(s)', '!NetQuit(i)', '!NetDirect(i)', '!NetNoSkip(i)', '!NetGolden(i)'
     $body = @('Debug(1)', 'ShowFPS(1)', 'AllTeams(1)') + $Lines
     [IO.File]::WriteAllText((Join-Path $Dir 'debugconf.scr'), (($decl + '' + $body) -join $nl) + $nl, $enc)
 }
@@ -78,13 +83,17 @@ $videoBak  = [IO.File]::ReadAllBytes($videoPath)
 $serverProc = $null
 
 try {
-    if ($Server -or $Menus -or $Ranked) {
-        # Les deux jeux passent par le serveur de salons, lancé ici
+    if ($Server -or $Menus -or $Ranked -or $League) {
+        # Les deux jeux passent par le serveur de salons, lancé ici. Port déjà pris (un vrai serveur lancé à la
+        # main) : on s'arrête, sinon les jeux de test iraient sur lui et écriraient dans sa base.
+        try { $probe = New-Object Net.Sockets.UdpClient($Port); $probe.Close() }
+        catch { throw "Le port UDP $Port est deja pris (un serveur tourne deja ?) : arrete-le, ou choisis -Port." }
         $log = Join-Path $Root 'build\online-server.log'
         New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
         $srvArgs = @("`"$(Join-Path $Root 'server\server.py')`"", '--port', $Port, '-v',
                      '--db', "`"$(Join-Path $Root 'build\online-test.db')`"")
         if ($Server) { $srvArgs += @('--code', 'TEST') }
+        if ($League) { $srvArgs += @('--league-code', 'TEST') }
         if ($Lag -gt 0) { $srvArgs += @('--lag', $Lag) }
         if ($Loss -gt 0) { $srvArgs += @('--loss', $Loss) }
         if ($NoDirect) { $srvArgs += '--no-direct' }
@@ -99,6 +108,11 @@ try {
             $hostLines += @('NetAuto(1)', "NetMatches($Matches)")
             $client += @('NetAuto(2)', 'NetCode("TEST")')
         }
+        if ($League) {
+            # NetMatches : joueurs attendus avant que le créateur lance la ligue
+            $hostLines += @('NetAuto(5)', 'NetMatches(2)')
+            $client += @('NetAuto(6)', $(if ($NoCode) { 'NetCode("")' } else { 'NetCode("TEST")' }))
+        }
         if ($Ranked) {
             $hostLines += @('NetAuto(4)', "NetMatches($Matches)")
             $client += @('NetAuto(4)', "NetMatches($Matches)")
@@ -110,7 +124,7 @@ try {
         $hostLines = @('MenuOn(0)', 'FirstLevel(7)', "NetHost($Port)")
         $client = @('MenuOn(0)', 'FirstLevel(7)', "NetJoin(`"127.0.0.1`", $Port)")
     }
-    if ($Ranked) {
+    if ($Ranked -or $League) {
         # l'hôte est tiré au sort par le serveur : mi-temps de test et jeu automatique valent pour les deux jeux
         if ($Half -gt 0) { $hostLines += "NetHalf($Half)"; $client += "NetHalf($Half)" }
         if ($Bot -or $HostBot) { $hostLines += 'NetBot(1)'; $client += 'NetBot(1)' }
@@ -120,6 +134,7 @@ try {
         if ($HostBot) { $hostLines += 'NetBot(1)' }
     }
     if ($NoSkip) { $hostLines += 'NetNoSkip(1)'; $client += 'NetNoSkip(1)' }
+    if ($Golden) { $hostLines += 'NetGolden(1)'; $client += 'NetGolden(1)' }
     if ($CutDirect) { $hostLines += 'NetDirect(2)'; $client += 'NetDirect(2)' }
     Write-DebugConf $Dev $hostLines
     Write-DebugConf $DevB $client

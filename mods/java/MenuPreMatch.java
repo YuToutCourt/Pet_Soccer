@@ -44,6 +44,8 @@ public class MenuPreMatch extends SoccerUserInterface {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(17);
       } else if (CoreLogic.m_bSurvival) {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_SURVIVAL); // [mod]
+      } else if (ModOnlineLeague.m_bMatch) {
+         ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE); // [mod] ligue en ligne
       } else if (CoreLogic.m_bLeague) {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_LEAGUE); // [mod]
       } else {

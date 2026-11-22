@@ -15,6 +15,7 @@ Coût : ★ = quelques heures, ★★ = une session, ★★★ = plusieurs sessi
 | 5 | ~~Survie~~ — fait et validé (`notes/survival.md`) | ★★ | 1 |
 | 6 | ~~Mode Ligue : ligue à 14 + playoffs avec loser bracket~~ — fait (`notes/league.md`) | ★★★ | 1 |
 | 7 | Multijoueur en ligne — phase 5 sur 5 faite (liaison directe, installeur pour les amis, file d'attente par Elo, pause de mi-temps), phases 2 à 5 à valider en jeu (`notes/online.md`) | ★★★★ | tout le reste figé |
+| 8 | Ligue en ligne : plusieurs amis dans une ligue, le reste à l'IA — phases 1 à 4 sur 5 faites (serveur, écrans du jeu, matchs contre l'IA, matchs entre amis), reste l'essai en vrai (`notes/online-league.md`) | ★★★★ | 6, 7 |
 
 Carrière et défis : abandonnés (2026-11-10).
 

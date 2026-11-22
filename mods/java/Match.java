@@ -164,7 +164,7 @@ public class Match {
                      && !GameField.m_cBall.m_bWasGoal) {
                      this.EndHalf();
                   }
-               } else if ((CoreLogic.m_bChampionships && CoreLogic.GetPlayer().m_cChampionships.m_nPhase > 0 || ModSurvival.IsGoldenGoal() || ModLeagueMode.IsGoldenGoal()) // [mod] survie, playoffs de la ligue
+               } else if ((CoreLogic.m_bChampionships && CoreLogic.GetPlayer().m_cChampionships.m_nPhase > 0 || ModSurvival.IsGoldenGoal() || ModLeagueMode.IsGoldenGoal() || ModOnlineLeague.IsGoldenGoal()) // [mod] survie, playoffs de la ligue
                   && this.m_nScoreLeft == this.m_nScoreRight) {
                   if (AIMatch.IsMatchState(0)
                      && !SoccerModule.m_cMatch.IsWaiting()
@@ -515,7 +515,8 @@ public class Match {
    Match() {
       this.m_teams[0] = null;
       this.m_teams[1] = null;
-      this.m_nHalfTime = CoreLogic.GetPlayer().GetHalfTime();
+      // [mod] ligue en ligne : la durée choisie à la création de la ligue, pas celle du profil
+      this.m_nHalfTime = ModOnlineLeague.m_bMatch ? ModOnlineLeague.GetHalfSeconds() : CoreLogic.GetPlayer().GetHalfTime();
    }
 
    void SetTeam(int nInd, Team cTeam) {
