@@ -16,7 +16,7 @@ class ModNet {
    static final int _MAGIC = 0x50534E31; // "PSN1"
    // Version du mod pour le jeu en ligne : à augmenter dès que les paquets ou les règles du match changent.
    // Le serveur ne met dans un même salon que deux jeux de même version.
-   static final int _MOD_VERSION = 4;
+   static final int _MOD_VERSION = 5;
    static final int _ROLE_NONE = 0;
    static final int _ROLE_HOST = 1;
    static final int _ROLE_CLIENT = 2;
