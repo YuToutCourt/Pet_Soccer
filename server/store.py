@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS matches (
     score_guest INTEGER NOT NULL,
     forfeit INTEGER NOT NULL,
     delta_host INTEGER NOT NULL,
-    delta_guest INTEGER NOT NULL
+    delta_guest INTEGER NOT NULL,
+    team_host INTEGER,
+    team_guest INTEGER
 );
 """
 _COLUMNS = "id, name, elo, games, wins, draws, losses, peak"
@@ -77,6 +79,12 @@ class Store:
     def __init__(self, path):
         self.db = sqlite3.connect(path)
         self.db.executescript(_SCHEMA)
+        # Migration : colonnes ajoutées après la création initiale de la table
+        for col in ("team_host", "team_guest"):
+            try:
+                self.db.execute("ALTER TABLE matches ADD COLUMN %s INTEGER" % col)
+            except Exception:
+                pass
         self.db.commit()
         self.players = {}  # numéro du compte -> Player : un seul objet par compte, partagé par ses sessions
 
@@ -108,7 +116,7 @@ class Store:
         self.db.commit()
         return player
 
-    def record(self, host, guest, score_host, score_guest, goals, forfeit):
+    def record(self, host, guest, score_host, score_guest, goals, forfeit, team_host=None, team_guest=None):
         """Compte un match classé. goals = (buts de l'hôte, buts de l'invité) retenus pour l'Elo : le score,
         ou une défaite d'au moins un but d'écart pour un forfait. Renvoie (variation de l'hôte, de l'invité)."""
         delta_host = elo_delta(host.elo, host.games, guest.elo, goals[0], goals[1])
@@ -123,9 +131,9 @@ class Store:
             self.db.execute("UPDATE players SET elo = ?, games = ?, wins = ?, draws = ?, losses = ?, peak = ? WHERE id = ?",
                             (player.elo, player.games, player.wins, player.draws, player.losses, player.peak, player.id))
         self.db.execute(
-            "INSERT INTO matches (played, host, guest, score_host, score_guest, forfeit, delta_host, delta_guest)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (time.time(), host.id, guest.id, score_host, score_guest, int(forfeit), delta_host, delta_guest))
+            "INSERT INTO matches (played, host, guest, score_host, score_guest, forfeit, delta_host, delta_guest, team_host, team_guest)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (time.time(), host.id, guest.id, score_host, score_guest, int(forfeit), delta_host, delta_guest, team_host, team_guest))
         self.db.commit()
         return delta_host, delta_guest
 
