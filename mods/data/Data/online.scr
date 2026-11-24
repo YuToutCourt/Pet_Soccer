@@ -8,7 +8,7 @@
 !Direct(i)
 
 // adresse (nom ou IP) et port UDP du serveur de salons (server\server.py)
-Server("127.0.0.1", 7777)
+Server("gostycorp.dev", 7777)
 
 // niveau de l'IA des coequipiers pendant un match en ligne (1..10), le meme chez tous les joueurs
 TeammateLevel(5)
