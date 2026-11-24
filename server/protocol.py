@@ -8,8 +8,8 @@ import socket
 import struct
 
 MAGIC = 0x50534E31  # "PSN1"
-LOBBY_PROTO = 4  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne
-LOBBY_PROTOS = (3, 4)  # versions acceptées : la 3 n'a pas la ligue, le reste du dialogue est le même
+LOBBY_PROTO = 5  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne ; 5 : statistiques
+LOBBY_PROTOS = (3, 4, 5)  # versions acceptées : la 3 n'a pas la ligue, la 4 pas les statistiques, le reste est le même
 
 # Paquets du match (ModNet) : le serveur les recopie tels quels vers l'autre joueur du salon
 PKT_INPUT = 1
@@ -23,11 +23,14 @@ PKT_HELLO = 16  # + version du dialogue (short), version du mod (int), nom du jo
 PKT_CREATE = 17  # crée un salon
 PKT_JOIN = 18  # + code du salon (chaîne)
 PKT_LEAVE = 19  # quitte le salon ou la file d'attente
-PKT_STATE = 20  # + ce que le joueur montre à l'autre (équipe, prêt, tactique...), recopié sans être lu
+PKT_STATE = 20  # + ce que le joueur montre à l'autre (équipe, prêt, tactique...), recopié tel quel ; le serveur en
+#                 garde une copie lue (read_state) : équipes et tactiques du match enregistré
 PKT_QUEUE = 21  # partie rapide : entre dans la file d'attente (répété tant que le joueur attend)
 PKT_MATCH = 22  # + numéro du match (int), phase (octet), buts de l'hôte (octet), buts de l'invité (octet), drapeaux (octet)
 PKT_TOP = 23  # demande le classement
 PKT_LEAGUE = 24  # ligue en ligne : + commande (octet LG_*), version de l'état de la ligue que le jeu a déjà (int), suite
+PKT_MATCH_STATS = 25  # le jeu de l'hôte, à la fin d'un match en ligne : ses statistiques (read_match_stats). Redit avec
+#                       PKT_MATCH tant que le serveur n'a pas tranché ; le serveur ne garde que le premier.
 
 # Serveur -> jeu
 PKT_INFO = 32  # réponse à chaque paquet ci-dessus
@@ -191,6 +194,129 @@ def read_join(data):
 def read_match(data):
     """Renvoie (numéro du match, phase, buts de l'hôte, buts de l'invité, drapeaux)."""
     return struct.unpack_from(">iBBBB", data, LOBBY_HEAD_SIZE)
+
+
+_STATE_TAIL = struct.Struct(">Bhi4B")
+
+
+def read_state(payload):
+    """PKT_STATE sans l'en-tête de salon (ModLobby.SendState). Renvoie un dict ; ValueError s'il est tronqué."""
+    if len(payload) < 5:
+        raise ValueError("état tronqué")
+    flags, animal, clothes = payload[0], payload[1], payload[2]
+    (n,) = struct.unpack_from(">H", payload, 3)
+    off = 5 + n
+    if off + _STATE_TAIL.size > len(payload):
+        raise ValueError("état tronqué")
+    tactic = payload[5:off].decode("latin-1")
+    level, half, match_id, t0, t1, t2, t3 = _STATE_TAIL.unpack_from(payload, off)
+    return dict(ready=bool(flags & 1), host=bool(flags & 2), animal=animal, clothes=clothes, tactic=tactic,
+                level=level, half=half, match_id=match_id, teams=(t0, t1, t2, t3))
+
+
+def make_state(ready=False, host=False, animal=0, clothes=0, tactic="", level=0, half=0, match_id=0, teams=(0, 0, 0, 0)):
+    """Pour les tests : le corps d'un PKT_STATE, comme ModLobby.SendState."""
+    t = tactic.encode("latin-1")
+    return (bytes([int(ready) | (2 if host else 0), animal, clothes]) + struct.pack(">H", len(t)) + t
+            + _STATE_TAIL.pack(level, half, match_id, *teams))
+
+
+# PKT_MATCH_STATS : n° du match (int), drapeaux (octet, 1 = but en or), taille de la grille des heatmaps (profondeur,
+# latéral : octets), puis pour l'équipe de l'hôte et celle de l'invité :
+#   tirs (short), possession % (octet), passes réussies, passes, récupérations, arrêts, supers (shorts),
+#   types de supers (int, bit n = super n), plus gros retard (octet) ;
+#   buts : n (octet), puis n x (minute, joueur (signé, -1 inconnu), drapeaux (1 = csc)) ; pour un csc, le joueur
+#     est de l'autre équipe ;
+#   supers : n, puis n x (minute, type) ;
+#   tirs : n, puis n x (minute, joueur (signé), profondeur, latéral (0..255), issue SHOT_*) ;
+#   joueurs : n, puis n x (place dans la liste Team<Animal>Players (0 = gardien), place de la tactique (signé, -1),
+#     buts, tirs, passes, passes réussies, récupérations (octets), distance en m (short non signé),
+#     profondeur et latéral moyens (0..255)) ;
+#   heatmap de l'équipe, puis du ballon quand elle l'a : profondeur x latéral octets (0..255, ligne par profondeur).
+# Profondeur 0 = son but, 1 = but adverse ; latéral 0 = haut de l'écran (repère de l'écran Tactique).
+MS_GOLDEN = 1
+SHOT_MISSED, SHOT_GOAL, SHOT_SAVED, SHOT_BLOCKED = range(4)
+SHOT_RESULTS = ("missed", "goal", "saved", "blocked")
+_MS_HEAD = struct.Struct(">iBBB")
+_MS_TEAM = struct.Struct(">hBhhhhhiB")
+_MS_PLAYER = struct.Struct(">BbBBBBBHBB")
+
+
+def read_match_stats(data):
+    """PKT_MATCH_STATS complet (en-tête compris). Renvoie un dict ; ValueError s'il est tronqué ou mal formé."""
+    off = LOBBY_HEAD_SIZE
+    match_id, flags, heat_d, heat_l = _MS_HEAD.unpack_from(data, off)
+    off += _MS_HEAD.size
+    if not (0 < heat_d <= 32 and 0 < heat_l <= 32):
+        raise ValueError("grille de heatmap invalide")
+    cells = heat_d * heat_l
+    teams = []
+    for _ in range(2):
+        shots, poss, passes_ok, passes, recoveries, saves, supers, super_types, deficit = _MS_TEAM.unpack_from(data, off)
+        off += _MS_TEAM.size
+        t = dict(shots=shots, possession=poss, passes_ok=passes_ok, passes=passes, recoveries=recoveries, saves=saves,
+                 supers=supers, super_types=super_types, max_deficit=deficit)
+        n = data[off]
+        off += 1
+        t["goals"] = []
+        for _ in range(n):
+            minute, number, gflags = struct.unpack_from(">BbB", data, off)
+            off += 3
+            t["goals"].append(dict(minute=minute, number=number, own_goal=bool(gflags & 1)))
+        n = data[off]
+        off += 1
+        if off + 2 * n > len(data):
+            raise ValueError("supers tronqués")
+        t["super_events"] = [dict(minute=data[off + 2 * i], type=data[off + 2 * i + 1]) for i in range(n)]
+        off += 2 * n
+        n = data[off]
+        off += 1
+        t["shot_events"] = []
+        for _ in range(n):
+            minute, number, depth, lateral, result = struct.unpack_from(">BbBBB", data, off)
+            off += 5
+            t["shot_events"].append(dict(minute=minute, number=number, depth=depth / 255.0, lateral=lateral / 255.0,
+                                   result=SHOT_RESULTS[result] if result < len(SHOT_RESULTS) else "missed"))
+        n = data[off]
+        off += 1
+        t["players"] = []
+        for _ in range(n):
+            number, slot, goals, pshots, ppasses, pok, prec, distance, depth, lateral = _MS_PLAYER.unpack_from(data, off)
+            off += _MS_PLAYER.size
+            t["players"].append(dict(number=number, slot=slot, goals=goals, shots=pshots, passes=ppasses, passes_ok=pok,
+                                     recoveries=prec, distance=distance, depth=depth / 255.0, lateral=lateral / 255.0))
+        if off + 2 * cells > len(data):
+            raise ValueError("heatmaps tronquées")
+        t["heatmap"] = list(data[off:off + cells])
+        t["ball_heatmap"] = list(data[off + cells:off + 2 * cells])
+        off += 2 * cells
+        teams.append(t)
+    return dict(match_id=match_id, golden_goal=bool(flags & MS_GOLDEN), heat_size=(heat_d, heat_l), teams=teams)
+
+
+def make_match_stats(match_id, teams, golden_goal=False, heat_size=(12, 8)):
+    """Pour les tests : le corps d'un PKT_MATCH_STATS (même dict que read_match_stats, positions en 0..1)."""
+    heat_d, heat_l = heat_size
+    out = bytearray(_MS_HEAD.pack(match_id, MS_GOLDEN if golden_goal else 0, heat_d, heat_l))
+    for t in teams:
+        out += _MS_TEAM.pack(t["shots"], t["possession"], t["passes_ok"], t["passes"], t["recoveries"], t["saves"],
+                             t["supers"], t["super_types"], t["max_deficit"])
+        out.append(len(t["goals"]))
+        for g in t["goals"]:
+            out += struct.pack(">BbB", g["minute"], g["number"], 1 if g["own_goal"] else 0)
+        out.append(len(t["super_events"]))
+        for s in t["super_events"]:
+            out += bytes([s["minute"], s["type"]])
+        out.append(len(t["shot_events"]))
+        for s in t["shot_events"]:
+            out += struct.pack(">BbBBB", s["minute"], s["number"], round(s["depth"] * 255), round(s["lateral"] * 255),
+                               SHOT_RESULTS.index(s["result"]))
+        out.append(len(t["players"]))
+        for p in t["players"]:
+            out += _MS_PLAYER.pack(p["number"], p["slot"], p["goals"], p["shots"], p["passes"], p["passes_ok"],
+                                   p["recoveries"], p["distance"], round(p["depth"] * 255), round(p["lateral"] * 255))
+        out += bytes(t["heatmap"]) + bytes(t["ball_heatmap"])
+    return bytes(out)
 
 
 def make_info(seq, status, code="", role=ROLE_NONE, members=0, peer_name="", join_error=JOIN_OK, flags=0,

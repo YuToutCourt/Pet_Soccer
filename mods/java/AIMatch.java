@@ -1382,6 +1382,8 @@ public class AIMatch extends Match {
          PROFILE_UpdateGame = Match.m_cModule.ProfileAdd("Soccer", "UpdateGame");
       }
 
+      ModStats.OnFrame(this); // [mod] heatmaps, positions moyennes et distance (statistiques en ligne)
+
       Match.m_cModule.ProfileBegin(PROFILE_UpdateGame);
       Commentator cComm = SoccerGame.game.GetCommentator();
       if (!this.m_bTeamFirstCommented && Match.m_cModule.m_Clock.GetMatchTimeF() > this.m_fTeamFirstCommentTime && !cComm.IsTalking()) {

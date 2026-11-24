@@ -9,8 +9,10 @@ build/
 decompiled/
 # Caches Python (scripts de mods/ et server/)
 __pycache__/
-# Comptes et Elo en ligne du serveur (créé au premier lancement de server.py)
+# Ancienne base SQLite du serveur (avant Postgres)
 server/*.db
+# Mot de passe de la base (docker-compose.yml) : voir .env.example
+.env
 graphify-out/
 online.dat
 crash.log

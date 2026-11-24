@@ -1,0 +1,55 @@
+# Pet Soccer en ligne : base Postgres, serveur de jeu (server/, UDP 7777) et site de stats (web/, Flask).
+#
+#   cp .env.example .env        # puis mettre un vrai mot de passe dans .env
+#   docker compose up -d --build
+#
+# Sur le PC de développement, la base seule suffit pour lancer server.py et les tests à la main :
+#   docker compose up -d postgres
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: pet-soccer-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pet-soccer
+      POSTGRES_USER: pet-soccer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?mettre POSTGRES_PASSWORD dans .env}
+    ports:
+      # seulement sur la machine elle-même (tunnel SSH pour l'administrer), jamais ouvert sur Internet
+      - "127.0.0.1:${POSTGRES_PORT:-54320}:5432"
+    volumes:
+      - pet_soccer_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pet-soccer -d pet-soccer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Serveur de jeu : salons, partie rapide, relais UDP. Crée les tables au démarrage (server/schema.sql).
+  game:
+    build: ./server
+    container_name: pet-soccer-game
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://pet-soccer:${POSTGRES_PASSWORD}@postgres:5432/pet-soccer
+    ports:
+      - "${GAME_PORT:-7777}:7777/udp"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Site de stats (dossier web/), en lecture seule sur la base. À brancher derrière le reverse proxy du VPS.
+  web:
+    build: ./web
+    container_name: pet-soccer-web
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://pet-soccer:${POSTGRES_PASSWORD}@postgres:5432/pet-soccer
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    depends_on:
+      game:
+        condition: service_started
+
+volumes:
+  pet_soccer_postgres_data:

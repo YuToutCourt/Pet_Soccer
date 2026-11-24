@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Pet Soccer Stats{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Georgia:wght@400;700&family=Segoe+UI:wght@400;500;600;700&display=swap" rel="stylesheet">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <nav class="nav" role="navigation" aria-label="Navigation principale">
+    <a href="{{ url_for('index') }}" class="nav-brand" aria-label="Pet Soccer Stats - Accueil">
+      <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <circle cx="32" cy="32" r="28" fill="#ecba28" fill-opacity="0.15" stroke="#ecba28" stroke-width="2"/>
+        <ellipse cx="32" cy="36" rx="16" ry="10" fill="#ecba28" fill-opacity="0.3"/>
+        <ellipse cx="32" cy="32" rx="12" ry="7" fill="#fff" fill-opacity="0.9"/>
+        <path d="M20 32 Q32 20 44 32 Q32 44 20 32" fill="#24180c" fill-opacity="0.7"/>
+        <path d="M26 32 Q32 26 38 32 Q32 38 26 32" fill="#fff" fill-opacity="0.5"/>
+      </svg>
+      <span>Pet Soccer</span>
+      <span>Stats</span>
+    </a>
+    <div class="nav-links">
+      <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Classement</a>
+      <a href="{{ url_for('matches') }}" class="nav-link {% if request.endpoint == 'matches' %}active{% endif %}">Matchs</a>
+      <a href="{{ url_for('meta') }}" class="nav-link {% if request.endpoint == 'meta' %}active{% endif %}">Méta</a>
+    </div>
+    {% if status %}
+      <span class="nav-status" title="{{ status['queued'] }} en file d'attente" style="font-size: .8rem; color: var(--win); white-space: nowrap;">● {{ status['online'] }} en ligne · {{ status['live_matches'] }} en match</span>
+    {% endif %}
+    <form class="nav-search" action="{{ url_for('index') }}" method="get" role="search" aria-label="Rechercher un joueur">
+      <input type="search" name="q" placeholder="Rechercher un joueur…" value="{{ request.args.get('q', '') }}" aria-label="Nom du joueur">
+    </form>
+  </nav>
+
+  <main class="container" role="main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="card" style="border-color: {% if category == 'error' %}{{ config.LOSS_COLOR }}{% else %}{{ config.GOLD_COLOR }}{% endif %};">
+            {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{{ content|safe if content }}{% endblock %}
+  </main>
+
+  <footer style="padding: 24px 20px; text-align: center; color: var(--text-muted); font-size: 0.8rem; border-top: 1px solid var(--border); margin-top: 40px;">
+    <p>Pet Soccer Stats — Données du serveur en ligne (lecture seule)</p>
+    <p style="margin-top: 4px;">Design system inspiré du jeu <strong>Pet Soccer</strong> — Anneaux métalliques, disques dégradés, texte en arc, emblèmes, lauriers, couronnes, reflets vitrés</p>
+  </footer>
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

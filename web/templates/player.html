@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}{{ p['name'] }} - Profil Pet Soccer Stats{% endblock %}
+
+{% block content %}
+{% set rname, rcolor, rbadge, rkey = get_rank_info(p['elo']) %}
+{% set wr = ((p['wins'] * 100 // p['games']) if p['games'] else 0) %}
+
+<!-- En-tête profil -->
+<div class="card">
+  <div class="profile-header">
+    <div class="profile-avatar">
+      <span>{{ animal }}</span>
+    </div>
+    <div class="profile-info">
+      <h1 class="profile-name">{{ p['name'] }}</h1>
+      <div class="profile-meta">
+        Inscrit le <strong>{{ fmt_date(p['created']) }}</strong> · Vu {{ fmt_ago(p['last_seen']) }}
+        · Classement <strong style="color: var(--gold-mid);">#{{ rank_pos }}</strong> sur {{ total_players }}
+      </div>
+      <div class="profile-rank">
+        {% if rbadge %}
+          <img src="{{ url_for('static', filename='img/ranks/' + rbadge) }}" alt="{{ rname }}" style="width: 48px; height: 48px; border-radius: 50%; box-shadow: var(--shadow-hard);">
+          <span class="elo-val" style="font-size: 1.25rem;">{{ p['elo'] }} <small style="color: var(--text-dim); font-size: 0.85rem;">Elo</small></span>
+          <span class="rank-badge rank-{{ rkey }}">{{ rname }}</span>
+        {% else %}
+          <span class="rank-badge rank-{{ rkey }}">{{ rname }} · {{ p['elo'] }} Elo</span>
+        {% endif %}
+
+        {% if p['peak'] > p['elo'] %}
+          <span class="profile-peak">Pic historique : <strong>{{ p['peak'] }} Elo</strong></span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Grille des statistiques & graphique Elo -->
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Statistiques du Joueur</h2>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-label">Parties</div>
+      <div class="stat-val">{{ p['games'] }}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Victoires</div>
+      <div class="stat-val win">{{ p['wins'] }}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Nuls</div>
+      <div class="stat-val draw">{{ p['draws'] }}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Défaites</div>
+      <div class="stat-val loss">{{ p['losses'] }}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Taux de Victoire</div>
+      <div class="stat-val {% if wr >= 55 %}win{% elif wr < 45 %}loss{% else %}draw{% endif %}">{{ wr }}%</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Elo Actuel</div>
+      <div class="stat-val gold">{{ p['elo'] }}</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Meilleur Elo</div>
+      <div class="stat-val gold">{{ p['peak'] }}</div>
+    </div>
+  </div>
+
+  {% if elo_history and elo_history|length > 1 %}
+    <div style="margin-top: 28px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 style="font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.8px;">Progression Elo (Derniers matchs)</h3>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">Min: {{ elo_history|min }} | Max: {{ elo_history|max }}</span>
+      </div>
+
+      <div class="elo-chart-wrap" style="height: 120px;">
+        <svg viewBox="0 0 400 80" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="eloGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="{{ rcolor }}" stop-opacity="0.4"/>
+              <stop offset="100%" stop-color="{{ rcolor }}" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          {% if spark_poly %}
+            <polygon points="{{ spark_poly }}" fill="url(#eloGrad)"/>
+          {% endif %}
+          {% if spark_line %}
+            <polyline points="{{ spark_line }}" fill="none" stroke="{{ rcolor }}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          {% endif %}
+        </svg>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<!-- Forme, moyennes et tactiques -->
+{% if form or (averages and averages['n']) or schemes %}
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Style de jeu</h2>
+  </div>
+  {% if form %}
+    <div style="display: flex; gap: 6px; margin-bottom: 16px; align-items: center;">
+      <span class="stat-label" style="margin-right: 8px;">Forme (10 derniers)</span>
+      {% for r in form %}<span class="match-result-tag result-{{ r }}" style="width: 28px; height: 28px; font-size: .8rem;">{{ r }}</span>{% endfor %}
+    </div>
+  {% endif %}
+  {% if averages and averages['n'] %}
+    <div class="stats-grid">
+      <div class="stat-box"><div class="stat-label">Buts / match</div><div class="stat-val">{{ '%.1f'|format(averages['goals']) }}</div></div>
+      <div class="stat-box"><div class="stat-label">Tirs / match</div><div class="stat-val">{{ '%.1f'|format(averages['shots']) }}</div></div>
+      <div class="stat-box"><div class="stat-label">Possession</div><div class="stat-val">{{ '%.0f'|format(averages['possession']) }}%</div></div>
+      <div class="stat-box"><div class="stat-label">Passes réussies</div><div class="stat-val">{{ pct(averages['passes_ok'] or 0, averages['passes'] or 0) }}%</div></div>
+      <div class="stat-box"><div class="stat-label">Récupérations</div><div class="stat-val">{{ '%.1f'|format(averages['recoveries']) }}</div></div>
+      <div class="stat-box"><div class="stat-label">Arrêts / match</div><div class="stat-val">{{ '%.1f'|format(averages['saves']) }}</div></div>
+      <div class="stat-box"><div class="stat-label">Record de buts</div><div class="stat-val gold">{{ averages['max_goals'] }}</div></div>
+    </div>
+  {% endif %}
+  {% if schemes %}
+    <div class="team-chips" style="margin-top: 16px;">
+      {% for s in schemes %}
+        <div class="team-chip"><div class="team-chip-info">
+          <span class="team-chip-name">{{ SCHEMES.get(s['scheme'], s['scheme']) }}</span>
+          <span class="team-chip-stats">{{ s['n'] }} match{% if s['n'] > 1 %}s{% endif %} · {{ pct(s['w'], s['n']) }}% de victoires</span>
+        </div></div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Équipes favorites -->
+{% if team_stats %}
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Équipes Favorites</h2>
+  </div>
+  <div class="team-chips">
+    {% for tidx, count, share, wr in team_stats %}
+      {% set tn, te, tc, tl = team_info(tidx) %}
+      <div class="team-chip">
+        {% if tl %}
+          <img src="{{ url_for('static', filename='img/logos/' + tl) }}" alt="{{ tn }}" loading="lazy">
+        {% else %}
+          <span style="font-size: 1.5rem;">{{ te }}</span>
+        {% endif %}
+        <div class="team-chip-info">
+          <span class="team-chip-name">{{ tn }}</span>
+          <span class="team-chip-stats">{{ count }} match{% if count > 1 %}s{% endif %} · {{ share }}% des matchs · {{ wr }}% de victoires</span>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Historique récent -->
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Derniers Matchs</h2>
+  </div>
+
+  {% if not matches %}
+    <div class="empty">Aucun match joué récemment.</div>
+  {% else %}
+    <div>
+      {% for m in matches %}
+        {% set is_host = m['host_id'] == p['id'] %}
+        {% set my_score = m['score_host'] if is_host else m['score_guest'] %}
+        {% set op_score = m['score_guest'] if is_host else m['score_host'] %}
+        {% set my_delta = m['delta_host'] if is_host else m['delta_guest'] %}
+        {% set opp_id = m['guest_id'] if is_host else m['host_id'] %}
+        {% set opp_name = m['guest_name'] if is_host else m['host_name'] %}
+        {% set my_team = m['team_host'] if is_host else m['team_guest'] %}
+        {% set op_team = m['team_guest'] if is_host else m['team_host'] %}
+        {% set result = 'W' if my_score > op_score else ('L' if my_score < op_score else 'D') %}
+        {% set tn_my, te_my, tc_my, tl_my = team_info(my_team) %}
+        {% set tn_op, te_op, tc_op, tl_op = team_info(op_team) %}
+
+        <div class="match-row">
+          <div class="match-result-tag result-{{ result }}" title="{% if result == 'W' %}Victoire{% elif result == 'L' %}Défaite{% else %}Égalité{% endif %}">
+            {{ result }}
+          </div>
+          <div class="match-main">
+            <div class="match-score-row">
+              <span class="team-tag">
+                {% if tl_my %}<img src="{{ url_for('static', filename='img/logos/' + tl_my) }}" alt="">{% else %}{{ te_my }}{% endif %}
+                <span class="team-name">{{ tn_my }}</span>
+              </span>
+              <span class="match-score">{{ my_score }}–{{ op_score }}</span>
+              <span class="team-tag">
+                {% if tl_op %}<img src="{{ url_for('static', filename='img/logos/' + tl_op) }}" alt="">{% else %}{{ te_op }}{% endif %}
+                <span class="team-name">{{ tn_op }}</span>
+              </span>
+            </div>
+            <div class="match-opp-row">
+              <span class="match-date" title="{{ fmt_date(m['played']) }}">{{ fmt_ago(m['played']) }}</span>
+              <span class="match-opp-name">
+                vs {% if opp_id %}<a href="{{ url_for('player', player_id=opp_id) }}">{{ opp_name }}</a>{% else %}{{ opp_name }}{% endif %}
+                · <a href="{{ url_for('match', match_id=m['id']) }}" style="color: var(--text-dim);">{{ KINDS.get(m['kind'], m['kind']) }}{% if m['has_stats'] %} · détails{% endif %}</a>
+              </span>
+              {% if m['forfeit'] %}
+                <span class="forfeit-tag">FORFAIT</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="match-elo-delta">
+            <span class="delta {% if my_delta > 0 %}delta-pos{% elif my_delta < 0 %}delta-neg{% else %}delta-zero{% endif %}">
+              {{ '+' if my_delta > 0 else '' }}{{ my_delta }}
+            </span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

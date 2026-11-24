@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Historique des matchs - Pet Soccer Stats{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h1 class="card-title">Historique des matchs <span style="font-size: 1rem; color: var(--text-dim); font-weight: 400;">({{ total }} matchs)</span></h1>
+    <nav style="display: flex; gap: 12px; font-size: .85rem;">
+      <a href="{{ url_for('matches') }}" style="color: {{ 'var(--gold-mid)' if not kind else 'var(--text-dim)' }}">Tous</a>
+      {% for k, label in KINDS.items() %}<a href="{{ url_for('matches', kind=k) }}" style="color: {{ 'var(--gold-mid)' if kind == k else 'var(--text-dim)' }}">{{ label }}</a>{% endfor %}
+    </nav>
+  </div>
+
+  {% if matches %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">Hôte</th>
+            <th scope="col">Équipe hôte</th>
+            <th scope="col" style="text-align: center;">Score</th>
+            <th scope="col">Équipe invité</th>
+            <th scope="col">Invité</th>
+            <th scope="col">Elo Δ</th>
+            <th scope="col">Type</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in matches %}
+          {% set hn, he, hc, hl = team_info(m['team_host']) %}
+          {% set gn, ge, gc, gl = team_info(m['team_guest']) %}
+          <tr>
+            <td class="date-cell" title="{{ fmt_date(m['played']) }}">{{ fmt_ago(m['played']) }}</td>
+            <td>
+              {% if m['host_id'] %}<a href="{{ url_for('player', player_id=m['host_id']) }}" class="player-link">{{ m['host_name'] }}</a>{% else %}{{ m['host_name'] }}{% endif %}
+            </td>
+            <td>
+              <span class="team-tag">
+                {% if hl %}
+                  <img src="{{ url_for('static', filename='img/logos/' + hl) }}" alt="" loading="lazy">
+                {% else %}
+                  <span class="team-emoji">{{ he }}</span>
+                {% endif %}
+                <span class="team-name">{{ hn }}</span>
+              </span>
+            </td>
+            <td style="text-align: center;">
+              <a href="{{ url_for('match', match_id=m['id']) }}" class="score" style="text-decoration: none;">{{ m['score_host'] }}<span class="score-sep">–</span>{{ m['score_guest'] }}</a>
+            </td>
+            <td>
+              <span class="team-tag">
+                {% if gl %}
+                  <img src="{{ url_for('static', filename='img/logos/' + gl) }}" alt="" loading="lazy">
+                {% else %}
+                  <span class="team-emoji">{{ ge }}</span>
+                {% endif %}
+                <span class="team-name">{{ gn }}</span>
+              </span>
+            </td>
+            <td>
+              {% if m['guest_id'] %}<a href="{{ url_for('player', player_id=m['guest_id']) }}" class="player-link">{{ m['guest_name'] }}</a>{% else %}{{ m['guest_name'] }}{% endif %}
+            </td>
+            <td>
+              <span class="delta {% if m['delta_host'] > 0 %}delta-pos{% elif m['delta_host'] < 0 %}delta-neg{% else %}delta-zero{% endif %}">
+                {{ '+' if m['delta_host'] > 0 else '' }}{{ m['delta_host'] }}
+              </span>
+              <span style="color: var(--text-muted); margin: 0 4px;">/</span>
+              <span class="delta {% if m['delta_guest'] > 0 %}delta-pos{% elif m['delta_guest'] < 0 %}delta-neg{% else %}delta-zero{% endif %}">
+                {{ '+' if m['delta_guest'] > 0 else '' }}{{ m['delta_guest'] }}
+              </span>
+            </td>
+            <td style="color: var(--text-dim); font-size: 0.8rem;">{{ KINDS.get(m['kind'], m['kind']) }}</td>
+            <td>
+              {% if m['forfeit'] %}
+                <span class="forfeit-tag">FORFAIT</span>
+              {% else %}
+                <span style="color: var(--text-muted); font-size: 0.75rem;">Terminé</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pages > 1 %}
+      <nav class="pagination" aria-label="Pagination des matchs">
+        {% if cur_page > 1 %}
+          <a href="{{ url_for('matches', kind=kind, p=cur_page-1) }}" rel="prev">Précédent</a>
+        {% else %}
+          <span style="opacity: 0.4; cursor: not-allowed;">Précédent</span>
+        {% endif %}
+
+        {% for i in range(1, pages + 1) %}
+          {% if i == cur_page %}
+            <span class="current" aria-current="page">{{ i }}</span>
+          {% elif i <= 2 or i >= pages - 1 or (i >= cur_page - 2 and i <= cur_page + 2) %}
+            <a href="{{ url_for('matches', kind=kind, p=i) }}">{{ i }}</a>
+          {% elif i == 3 or i == pages - 2 %}
+            <span aria-hidden="true">…</span>
+          {% endif %}
+        {% endfor %}
+
+        {% if cur_page < pages %}
+          <a href="{{ url_for('matches', kind=kind, p=cur_page+1) }}" rel="next">Suivant</a>
+        {% else %}
+          <span style="opacity: 0.4; cursor: not-allowed;">Suivant</span>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <div class="empty">Aucun match enregistré pour le moment.</div>
+  {% endif %}
+</div>
+{% endblock %}

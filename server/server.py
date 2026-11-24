@@ -1,15 +1,17 @@
 """Serveur du multijoueur en ligne de Pet Soccer : salons à code, partie rapide classée et relais UDP.
 
-    python server\\server.py [--port 7777] [--db fichier] [--lag 80] [--jitter 20] [--loss 5] [--code TEST] [-v]
+    python server\\server.py [--port 7777] [--db postgresql://...] [--lag 80] [--jitter 20] [--loss 5] [--code TEST] [-v]
 
 Le serveur ne simule rien. Un joueur crée un salon et reçoit un code de 4 lettres, l'autre entre ce
 code ; ensuite le serveur recopie les paquets de l'un vers l'autre, donc aucun des deux n'ouvre de
 port chez lui. Quand c'est possible, les deux jeux se parlent ensuite en direct (le serveur donne à
 chacun l'adresse de l'autre) et le relais ne sert plus que de secours. La partie rapide réunit deux
 joueurs d'Elo proche dans un salon classé : le résultat change leur Elo en ligne, gardé avec les
-comptes dans un fichier SQLite (--db). Ce fichier garde aussi les ligues en ligne (leagues.py) : plusieurs
-amis dans une ligue à 14, les autres équipes à l'IA, une journée fermée au bout d'un délai.
-Un seul port UDP, bibliothèque standard seule. Détails dans notes/online.md.
+comptes dans une base Postgres (--db, ou la variable DATABASE_URL ; schéma dans schema.sql). Chaque match en
+ligne y est enregistré avec les tactiques et les statistiques envoyées par le jeu de l'hôte, pour le site
+(web.py). La base garde aussi les ligues en ligne (leagues.py) : plusieurs amis dans une ligue à 14, les
+autres équipes à l'IA, une journée fermée au bout d'un délai.
+Un seul port UDP ; seule dépendance : psycopg (pip install "psycopg[binary]"). Détails dans notes/online.md.
 
   --lag, --jitter, --loss : simulent une mauvaise connexion sur les paquets relayés (tests). Ils
                             coupent la liaison directe, comme --no-direct.
@@ -30,7 +32,7 @@ import time
 import protocol as P
 from rooms import Lobby
 from leagues import Leagues
-from store import Store, clean_name
+from store import DatabaseError, Store, clean_name
 
 
 class Server:
@@ -102,7 +104,7 @@ class Server:
         rows = [(i + 1, p.name, p.elo, p.wins, p.draws, p.losses) for i, p in enumerate(store.top(P.TOP_ROWS))]
         return P.make_ranks(store.rank(session.player) if session.player else 0, store.total(), rows)
 
-    def login(self, client_id, name, token):
+    def login(self, client_id, name, token, mod_version):
         """Le compte du joueur qui se présente. Lu dans la base une fois par jeu, pas à chaque bonjour."""
         store = self.lobby.store
         if store is None:
@@ -110,7 +112,7 @@ class Server:
         known = self.lobby.sessions.get(client_id)
         if known is not None and known.player is not None and known.token == token and known.player.name == name:
             return known.player
-        return store.login(token, name)
+        return store.login(token, name, mod_version)
 
     def handle(self, data, addr, now):
         ptype = P.read_head(data)
@@ -134,7 +136,7 @@ class Server:
             return
 
         if ptype not in (P.PKT_HELLO, P.PKT_CREATE, P.PKT_JOIN, P.PKT_LEAVE, P.PKT_STATE, P.PKT_QUEUE, P.PKT_MATCH,
-                         P.PKT_TOP, P.PKT_LEAGUE):
+                         P.PKT_TOP, P.PKT_LEAGUE, P.PKT_MATCH_STATS):
             return
         client_id, seq = P.read_lobby_head(data)
 
@@ -144,7 +146,7 @@ class Server:
                 self.send(P.make_info(seq, P.STATUS_BAD_PROTO), addr)
                 return
             name = clean_name(name)
-            session = lobby.hello(client_id, addr, name, mod_version, now, self.login(client_id, name, token), token,
+            session = lobby.hello(client_id, addr, name, mod_version, now, self.login(client_id, name, token, mod_version), token,
                                   local_addr)
             self.send(self.info(session, seq), addr)
             return
@@ -159,6 +161,10 @@ class Server:
         if ptype == P.PKT_LEAGUE:
             self.league(session, seq, data, now)
             return
+        if ptype == P.PKT_MATCH_STATS:
+            # pas de réponse : le jeu redit ses statistiques avec PKT_MATCH, qui a la sienne
+            lobby.match_stats(session, P.read_match_stats(data))
+            return
 
         join_error = P.JOIN_OK
         if ptype == P.PKT_CREATE:
@@ -171,6 +177,10 @@ class Server:
             peer = lobby.peer(session)
             if peer is not None:
                 self.relay(P.make_peer(data[P.LOBBY_HEAD_SIZE:]), peer.addr, now)
+            try:
+                lobby.set_state(session, P.read_state(data[P.LOBBY_HEAD_SIZE:]))
+            except (ValueError, struct.error):
+                pass  # relayé quand même : c'est l'autre jeu qui le lit
         elif ptype == P.PKT_QUEUE:
             lobby.enqueue(session, now)
         elif ptype == P.PKT_MATCH:
@@ -199,8 +209,12 @@ class Server:
             error = self.lobby.league_play(session, now)
         self.send(P.make_league_info(seq, error, leagues.view(session.player, known, wall, self.presence)), session.addr)
 
+    def write_status(self):
+        if self.lobby.store is not None:
+            self.lobby.store.write_status(*self.lobby.status())
+
     def run(self):
-        next_expire = next_stats = time.monotonic()
+        next_expire = next_stats = next_status = time.monotonic()
         while True:
             now = time.monotonic()
             wait = 0.5
@@ -224,13 +238,21 @@ class Server:
                 except (ValueError, IndexError, struct.error) as e:
                     if self.verbose:
                         self.log("paquet illisible de %s:%d : %s" % (addr[0], addr[1], e))
+                except DatabaseError as e:
+                    self.log("ERREUR base (paquet %d de %s:%d) : %s" % (data[4] if len(data) > 4 else -1, addr[0], addr[1], e))
             self.flush(now)
 
-            if now >= next_expire:
-                next_expire = now + 1.0
-                self.lobby.expire(now)
-                if self.lobby.leagues is not None:
-                    self.lobby.leagues.tick(self.lobby.leagues.clock(), self.lobby.league_busy())
+            try:
+                if now >= next_expire:
+                    next_expire = now + 1.0
+                    self.lobby.expire(now)
+                    if self.lobby.leagues is not None:
+                        self.lobby.leagues.tick(self.lobby.leagues.clock(), self.lobby.league_busy())
+                if now >= next_status:
+                    next_status = now + 10.0
+                    self.write_status()
+            except DatabaseError as e:
+                self.log("ERREUR base : %s" % e)
             if self.verbose and now >= next_stats:
                 next_stats = now + 10.0
                 if self.stats["recv"]:
@@ -252,12 +274,22 @@ def open_socket(host, port):
     return sock
 
 
+def hide_password(url):
+    """L'adresse de la base sans son mot de passe, pour le journal."""
+    head, sep, tail = url.rpartition("@")
+    if not sep or ":" not in head.split("//", 1)[-1]:
+        return url
+    scheme, _, auth = head.partition("//")
+    return "%s//%s:***@%s" % (scheme, auth.split(":", 1)[0], tail)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # journal lisible même redirigé vers un fichier
     ap = argparse.ArgumentParser(description="Serveur du multijoueur en ligne de Pet Soccer (salons, partie rapide, relais UDP).")
-    ap.add_argument("--db", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "players.db"),
-                    help="fichier SQLite des comptes et de l'Elo en ligne (players.db à côté de server.py par défaut)")
+    ap.add_argument("--db", default=os.environ.get("DATABASE_URL"),
+                    help="base Postgres des comptes, de l'Elo et des matchs (postgresql://utilisateur:mot de passe@hôte:port/base)."
+                         " Par défaut : la variable DATABASE_URL")
     ap.add_argument("--host", default="0.0.0.0", help="adresse d'écoute (0.0.0.0 : toutes)")
     ap.add_argument("--port", type=int, default=7777, help="port UDP (7777 par défaut)")
     ap.add_argument("--lag", type=float, default=0, help="retard ajouté à chaque paquet relayé, en ms")
@@ -277,9 +309,11 @@ def main():
     ap.add_argument("--no-direct", action="store_true", help="tout le match passe par le serveur : pas de liaison directe entre les jeux")
     ap.add_argument("-v", "--verbose", action="store_true", help="statistiques toutes les 10 s, paquets illisibles")
     args = ap.parse_args()
+    if not args.db:
+        ap.error("donner la base : --db postgresql://... ou la variable DATABASE_URL")
 
     code = args.code.strip().upper() if args.code else None
-    store = Store(args.db)
+    store = Store(args.db, log=lambda text: print(time.strftime("%H:%M:%S ") + text, flush=True))
     lobby = Lobby(fixed_code=code, timeout=args.timeout, stale=args.stale, store=store,
                   lost_after=args.lost, claim_wait=args.claim, takeover_after=args.takeover,
                   queue_range=args.queue_range, queue_grow=args.queue_grow,
@@ -300,7 +334,7 @@ def main():
         extras.append("code imposé %s" % code)
     server.log("serveur Pet Soccer sur le port UDP %d%s" % (args.port, " (" + ", ".join(extras) + ")" if extras else ""))
     lobby.leagues.log = server.log
-    server.log("comptes et Elo : %s (%d joueurs classés, %d ligues en cours)" % (args.db, store.total(), len(lobby.leagues.by_code)))
+    server.log("base : %s (%d joueurs classés, %d ligues en cours)" % (hide_password(args.db), store.total(), len(lobby.leagues.by_code)))
     try:
         server.run()
     except KeyboardInterrupt:

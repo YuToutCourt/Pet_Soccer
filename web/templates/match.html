@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block title %}{{ m['host_name'] }} {{ m['score_host'] }}–{{ m['score_guest'] }} {{ m['guest_name'] }} - Pet Soccer Stats{% endblock %}
+
+{% block extra_head %}
+<style>
+  .match-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; text-align: center; }
+  .match-head .side { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+  .match-head .side img { width: 64px; height: 64px; }
+  .match-head .big-score { font-size: 2.6rem; font-weight: 700; color: var(--gold-mid); letter-spacing: 2px; }
+  .match-head .who { font-weight: 700; font-size: 1.05rem; }
+  .match-meta { margin-top: 12px; text-align: center; color: var(--text-dim); font-size: 0.85rem; }
+  .cmp-row { display: grid; grid-template-columns: 56px 1fr 140px 1fr 56px; align-items: center; gap: 8px; margin: 8px 0; font-size: 0.9rem; }
+  .cmp-row .lab { text-align: center; color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; letter-spacing: .5px; }
+  .cmp-bar { height: 8px; background: var(--bg-deep); border-radius: 4px; overflow: hidden; display: flex; }
+  .cmp-bar.left { justify-content: flex-end; }
+  .cmp-bar span { display: block; height: 100%; background: var(--gold-mid); }
+  .cmp-bar.right span { background: var(--diamant); }
+  .cmp-row .v { font-weight: 700; text-align: center; }
+  .timeline { list-style: none; padding: 0; margin: 0; }
+  .timeline li { display: grid; grid-template-columns: 1fr 52px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); align-items: center; }
+  .timeline .min { text-align: center; font-weight: 700; color: var(--gold-mid); }
+  .timeline .l { text-align: right; }
+  .pitch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .pitch-box h3 { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .8px; margin: 0 0 8px; }
+  .pitch { width: 100%; height: auto; display: block; border-radius: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  table.players td, table.players th { padding: 6px 8px; font-size: 0.85rem; }
+</style>
+{% endblock %}
+
+{# Terrain vu par l'équipe : son but à gauche, elle attaque vers la droite. Repère du jeu : profondeur 0..1, latéral 0 = haut. #}
+{% set W, H = 105, 68 %}
+{% macro pitch_lines() %}
+  <rect x="0" y="0" width="{{ W }}" height="{{ H }}" fill="#1d4d2b"/>
+  <g fill="none" stroke="rgba(255,255,255,.45)" stroke-width="0.4">
+    <rect x="0.5" y="0.5" width="{{ W - 1 }}" height="{{ H - 1 }}"/>
+    <line x1="{{ W / 2 }}" y1="0.5" x2="{{ W / 2 }}" y2="{{ H - 0.5 }}"/>
+    <circle cx="{{ W / 2 }}" cy="{{ H / 2 }}" r="9.15"/>
+    <rect x="0.5" y="{{ H / 2 - 20 }}" width="16.5" height="40"/>
+    <rect x="{{ W - 17 }}" y="{{ H / 2 - 20 }}" width="16.5" height="40"/>
+  </g>
+{% endmacro %}
+
+{% macro heat_svg(grid, color) %}
+  <svg class="pitch" viewBox="0 0 {{ W }} {{ H }}" role="img">
+    {{ pitch_lines() }}
+    {% set nd = grid|length %}{% set nl = grid[0]|length %}
+    {% for d in range(nd) %}{% for l in range(nl) %}
+      {% set v = grid[d][l] %}
+      {% if v > 0 %}
+        <rect x="{{ d * W / nd }}" y="{{ l * H / nl }}" width="{{ W / nd }}" height="{{ H / nl }}" fill="{{ color }}" fill-opacity="{{ (v / 255 * 0.85)|round(2) }}"/>
+      {% endif %}
+    {% endfor %}{% endfor %}
+  </svg>
+{% endmacro %}
+
+{% block content %}
+{% set hn, he, hc, hl = team_info(m['team_host']) %}
+{% set gn, ge, gc, gl = team_info(m['team_guest']) %}
+{% set h, gst = teams[0], teams[1] %}
+
+<div class="card">
+  <div class="match-head">
+    <div class="side">
+      {% if hl %}<img src="{{ url_for('static', filename='img/logos/' + hl) }}" alt="">{% else %}<span style="font-size:3rem">{{ he }}</span>{% endif %}
+      <span class="who">{% if m['host_id'] %}<a class="player-link" href="{{ url_for('player', player_id=m['host_id']) }}">{{ m['host_name'] }}</a>{% else %}{{ m['host_name'] }}{% endif %}</span>
+      <span style="color: var(--text-dim)">{{ hn }}</span>
+      {% if m['rated'] %}<span class="delta {% if m['delta_host'] > 0 %}delta-pos{% elif m['delta_host'] < 0 %}delta-neg{% else %}delta-zero{% endif %}">{{ '+' if m['delta_host'] > 0 else '' }}{{ m['delta_host'] }} Elo</span>{% endif %}
+    </div>
+    <div>
+      <div class="big-score">{{ m['score_host'] }}–{{ m['score_guest'] }}</div>
+      {% if m['forfeit'] %}<span class="forfeit-tag">FORFAIT {{ m['host_name'] if m['forfeit_side'] == 0 else m['guest_name'] }}</span>{% endif %}
+      {% if m['golden_goal'] %}<div style="color: var(--gold-mid); font-size: .8rem; margin-top: 4px;">But en or</div>{% endif %}
+    </div>
+    <div class="side">
+      {% if gl %}<img src="{{ url_for('static', filename='img/logos/' + gl) }}" alt="">{% else %}<span style="font-size:3rem">{{ ge }}</span>{% endif %}
+      <span class="who">{% if m['guest_id'] %}<a class="player-link" href="{{ url_for('player', player_id=m['guest_id']) }}">{{ m['guest_name'] }}</a>{% else %}{{ m['guest_name'] }}{% endif %}</span>
+      <span style="color: var(--text-dim)">{{ gn }}</span>
+      {% if m['rated'] %}<span class="delta {% if m['delta_guest'] > 0 %}delta-pos{% elif m['delta_guest'] < 0 %}delta-neg{% else %}delta-zero{% endif %}">{{ '+' if m['delta_guest'] > 0 else '' }}{{ m['delta_guest'] }} Elo</span>{% endif %}
+    </div>
+  </div>
+  <div class="match-meta">
+    {{ KINDS.get(m['kind'], m['kind']) }} · {{ fmt_date(m['played']) }}
+    {% if m['duration_s'] %} · {{ m['duration_s'] // 60 }} min {{ m['duration_s'] % 60 }} s{% endif %}
+    {% if m['stadium'] is not none %} · stade {{ m['stadium'] }}{% endif %}
+    {% if m['room_code'] and m['kind'] == 'private' %} · salon {{ m['room_code'] }}{% endif %}
+  </div>
+</div>
+
+{% if not m['has_stats'] %}
+<div class="card"><div class="empty">Pas de statistiques pour ce match (le jeu de l'hôte ne les a pas envoyées).</div></div>
+{% else %}
+
+<div class="card">
+  <div class="card-header"><h2 class="card-title">Statistiques</h2></div>
+  {% set rows = [
+    ('Tirs', h['shots'], gst['shots']),
+    ('Possession %', h['possession'], gst['possession']),
+    ('Passes réussies', h['passes_ok'], gst['passes_ok']),
+    ('Passes', h['passes'], gst['passes']),
+    ('Récupérations', h['recoveries'], gst['recoveries']),
+    ('Arrêts', h['saves'], gst['saves']),
+    ('Supers', h['supers'], gst['supers']),
+  ] %}
+  {% for label, a, b in rows %}
+    {% set tot = (a or 0) + (b or 0) %}
+    <div class="cmp-row">
+      <span class="v">{{ a }}</span>
+      <div class="cmp-bar left"><span style="width: {{ pct(a or 0, tot) }}%"></span></div>
+      <span class="lab">{{ label }}</span>
+      <div class="cmp-bar right"><span style="width: {{ pct(b or 0, tot) }}%"></span></div>
+      <span class="v">{{ b }}</span>
+    </div>
+  {% endfor %}
+  <div class="cmp-row">
+    <span class="v">{{ pct(h['passes_ok'] or 0, h['passes'] or 0) }}%</span><span></span>
+    <span class="lab">Précision des passes</span><span></span>
+    <span class="v">{{ pct(gst['passes_ok'] or 0, gst['passes'] or 0) }}%</span>
+  </div>
+</div>
+
+{% if timeline %}
+<div class="card">
+  <div class="card-header"><h2 class="card-title">Fil du match</h2></div>
+  <ul class="timeline">
+    {% for e in timeline %}
+      {% set label %}{% if e['kind'] == 'goal' %}⚽ {{ e['who'] or 'But' }}{% elif e['kind'] == 'own_goal' %}⚽ {{ e['who'] }} (csc){% else %}⚡ Super {{ e['super_type'] }}{% endif %}{% endset %}
+      <li>
+        <span class="l">{% if e['side'] == 0 %}{{ label }}{% endif %}</span>
+        <span class="min">{{ e['minute'] }}'</span>
+        <span>{% if e['side'] == 1 %}{{ label }}{% endif %}</span>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% for t in teams %}
+{% set tn, te, tc, tl = team_info(t['animal']) %}
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">{{ t['name'] }} — {{ tn }}
+      <span style="font-size: .9rem; color: var(--text-dim); font-weight: 400;">· {{ SCHEMES.get(t['scheme'], t['scheme'] or 'tactique inconnue') }}</span>
+    </h2>
+  </div>
+  <div class="pitch-grid">
+    <div class="pitch-box">
+      <h3>Tactique : prévu (cercle) et position moyenne réelle (disque)</h3>
+      <svg class="pitch" viewBox="0 0 {{ W }} {{ H }}" role="img">
+        {{ pitch_lines() }}
+        {% for f in t['footballers'] %}
+          {% set ax, ay = [[f['avg_depth'] * W, 3]|max, W - 3]|min, [[f['avg_lateral'] * H, 3]|max, H - 6]|min %}
+          {% if f['planned'] %}
+            {% set px, py = f['planned'][0] * W, f['planned'][1] * H %}
+            <line x1="{{ px }}" y1="{{ py }}" x2="{{ ax }}" y2="{{ ay }}" stroke="rgba(255,255,255,.35)" stroke-width="0.4" stroke-dasharray="1 1"/>
+            <circle cx="{{ px }}" cy="{{ py }}" r="2.6" fill="none" stroke="#fff" stroke-width="0.5"/>
+          {% endif %}
+          <circle cx="{{ ax }}" cy="{{ ay }}" r="2.6" fill="{{ tc }}" stroke="#000" stroke-width="0.4"/>
+          <text x="{{ ax }}" y="{{ ay + 1.1 }}" font-size="3" text-anchor="middle" fill="#000" font-weight="700">{{ f['slot'] + 2 if f['slot'] is not none and f['slot'] >= 0 else f['number'] + 1 }}</text>
+          <text x="{{ ax }}" y="{{ ay + 5.6 }}" font-size="2.4" text-anchor="middle" fill="#fff">{{ f['display_name'] }}</text>
+        {% endfor %}
+      </svg>
+    </div>
+    {% if t.get('heat_grid') %}
+    <div class="pitch-box">
+      <h3>Heatmap de l'équipe</h3>
+      {{ heat_svg(t['heat_grid'], '#ecba28') }}
+    </div>
+    {% endif %}
+    {% if t.get('ball_grid') %}
+    <div class="pitch-box">
+      <h3>Le ballon quand {{ tn }} l'a</h3>
+      {{ heat_svg(t['ball_grid'], '#70a6ff') }}
+    </div>
+    {% endif %}
+    <div class="pitch-box">
+      <h3>Tirs ({{ t['shots_list']|length }})</h3>
+      <svg class="pitch" viewBox="0 0 {{ W }} {{ H }}" role="img">
+        {{ pitch_lines() }}
+        {% set colors = {'goal': '#3dba78', 'saved': '#f5a623', 'blocked': '#a8abb8', 'missed': '#e74c5a'} %}
+        {% for s in t['shots_list'] %}
+          <circle cx="{{ s['pos_depth'] * W }}" cy="{{ s['pos_lateral'] * H }}" r="1.8" fill="{{ colors.get(s['result'], '#fff') }}" stroke="#000" stroke-width="0.3">
+            <title>{{ s['minute'] }}' {{ footballer_name(t['animal'], s['number']) }} : {{ SHOT_RESULTS.get(s['result'], s['result']) }}</title>
+          </circle>
+        {% endfor %}
+      </svg>
+      <div class="legend">
+        {% for k, c in colors.items() %}<span><i style="background: {{ c }}"></i>{{ SHOT_RESULTS[k] }}</span>{% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 16px;">
+    <table class="players">
+      <thead><tr><th>Joueur</th><th>Rôle</th><th>Buts</th><th>Tirs</th><th>Passes</th><th>Récup.</th><th>Distance</th></tr></thead>
+      <tbody>
+        {% for f in t['footballers'] %}
+        <tr>
+          <td>{{ f['display_name'] }}{% if f['number'] == 0 %} <span style="color: var(--text-muted)">(gardien)</span>{% endif %}</td>
+          <td>{{ ROLES.get(f['role'], f['role'] or '—') }}</td>
+          <td>{{ f['goals'] }}{% if f['own_goals'] %} <span style="color: var(--loss)">({{ f['own_goals'] }} csc)</span>{% endif %}</td>
+          <td>{{ f['shots'] }}</td>
+          <td>{{ f['passes_ok'] }}/{{ f['passes'] }}</td>
+          <td>{{ f['recoveries'] }}</td>
+          <td>{{ f['distance'] }} m</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

@@ -861,6 +861,12 @@ class ModTactics {
       GameObject.CrashLog(sLog + " placements " + sCustom + "\n");
    }
 
+   // [mod] en ligne (ModStats.PutMatchStats) : place 0..5 du joueur dans la composition, -1 (gardien, jeu d'origine)
+   static int GetSlot(AIFootBaller cFB) {
+      PlayerInfo info = (PlayerInfo)m_tPlayers.get(cFB);
+      return info != null && info.m_cRole != null ? info.m_nSlot : -1;
+   }
+
    // ---------------------------------------------------------------- placement en match
 
    private static float BallDepth(int nSide) {
@@ -894,7 +900,7 @@ class ModTactics {
       return m_fOffsideMargin;
    }
 
-   private static float Depth(int nSide, Vector vPos) {
+   static float Depth(int nSide, Vector vPos) {
       float f = (vPos.fZ - GameField.vFieldLogicalStart.fZ) / GameField.fLineEnd;
       return nSide == 0 ? f : 1.0F - f;
    }
@@ -913,7 +919,7 @@ class ModTactics {
    }
 
    // latéral du ballon (0 = haut de l'écran)
-   private static float LateralOf(Vector vPos) {
+   static float LateralOf(Vector vPos) {
       return XToL(Clamp((vPos.fX - GameField.vFieldLogicalStart.fX) / GameField.fLineOutTop, 0.0F, 1.0F));
    }
 

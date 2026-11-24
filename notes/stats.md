@@ -26,6 +26,25 @@ Les autres sont comptés par `ModStats` :
   joueur de l'équipe (`m_nNumberInTeam` 6). `ModStats.GetListIndex` : gardien → 1er nom, joueurs de champ → noms 2 à 7.
 - Log : `[mod] stats : but de Holandia (VarDenVan, n1) a la 11e`.
 
+## Statistiques détaillées pour le serveur en ligne
+Comptées dans tous les matchs, envoyées seulement par le jeu de l'hôte d'un match en ligne (`ModStats.PutMatchStats`,
+paquet `MATCH_STATS`, voir `online.md` « Base et site de stats »).
+
+| Donnée | Règle | Accroche |
+|---|---|---|
+| Heatmap de l'équipe | toutes les 0,25 s de match en jeu (état 0, hors ralenti), la case de chaque joueur (gardien compris) dans une grille 12 (profondeur) x 8 (latéral) | `AIMatch.UpdateGame` → `ModStats.OnFrame` |
+| Heatmap du ballon | même relevé, case du ballon pour l'équipe qui l'a (`m_cLastPossesor`) | `OnFrame` |
+| Position moyenne, distance | par joueur ; un déplacement de plus de 6 % de la longueur entre deux relevés (replacement) ou après un arrêt du jeu n'est pas compté. Distance en m, longueur du terrain = 100 m | `OnFrame` |
+| Passes, passes réussies, récupérations, tirs, buts par joueur | mêmes règles que les compteurs d'équipe ; un csc n'est pas un but du joueur | `OnPass`, `OnPossession`, `OnShot`, `OnGoal` |
+| Tirs | minute, tireur, position ; issue : but (`OnGoal` de la même équipe, ou arrêt annulé par un but dans les 2 s), arrêté (`AddSave`), contré (`OnTouch` d'un joueur de champ adverse), sinon à côté. 30 au plus par équipe | `OnShot` |
+| Supers | minute et type, 20 au plus par équipe | `OnSuper` |
+
+- Repère : celui de l'écran Tactique, `ModTactics.Depth(côté, position)` (0 = son but, 1 = but adverse) et
+  `ModTactics.LateralOf` (0 = haut de l'écran). Les positions moyennes se comparent donc directement aux placements de
+  la composition. Joueur = place dans la liste `Team<Animal>Players` (`GetListIndex`, 0 = gardien) ; place dans la
+  tactique : `ModTactics.GetSlot` (-1 pour le gardien et le jeu d'origine).
+- Heatmaps ramenées à 0..255 (case la plus fréquentée = 255) avant l'envoi.
+
 ## Historique
 - Enregistré pour les mêmes matchs que l'Elo : humain contre IA, hors démo et multijoueur local.
   Fin normale : `AIMatch.AfterMatch` (après `ModElo.OnMatchEnd`). Abandon (quitter ou recommencer) :

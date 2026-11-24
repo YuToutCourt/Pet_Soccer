@@ -1,0 +1,8 @@
+__pycache__/
+*.db
+java/
+test_*.py
+fake_client.py
+echo_test.py
+seed_demo.py
+testdb.py

@@ -15,7 +15,7 @@
                en ligne. -Bot et -HostBot valent alors pour les deux jeux.
     -League  : ligue en ligne (notes\online-league.md), sans souris : game_dev crée la ligue TEST, game_dev_b la
                rejoint, game_dev la lance quand les deux y sont, puis chacun ouvre le classement. Les ligues vont
-               dans build\online-test.db, avec les comptes.
+               dans la base de test, avec les comptes.
 
   -Bot     : le client joue tout seul (utile pour regarder sans toucher au clavier)
   -HostBot : l'hôte fait une passe toutes les 2 s. À ajouter quand personne n'est au clavier de l'hôte : une
@@ -36,9 +36,10 @@
   -NoSkip  : les jeux automatiques (-Bot, -HostBot) ne cliquent pas « continuer » à la mi-temps : la pause va
              au bout de son temps (HalfBreak de online.scr, 30 s)
 
-  Les comptes et l'Elo en ligne de ces tests vont dans build\online-test.db, pas dans la base du vrai
-  serveur (server\players.db). Supprime ce fichier pour repartir de zéro. Dans le classement, game_dev_b
-  s'appelle « invite » : les deux jeux ont sinon le même nom de profil.
+  Les comptes, l'Elo et les matchs de ces tests vont dans la base Postgres de test pet_soccer_test
+  (server\testdb.py : le Postgres de docker-compose.yml, ou TEST_DATABASE_URL), jamais dans celle du vrai
+  serveur. -ResetDb la vide avant de commencer. Dans le classement, game_dev_b s'appelle « invite » : les deux
+  jeux ont sinon le même nom de profil.
 
   Le clavier va à la fenêtre active : clique sur celle du client pour jouer l'équipe de droite,
   sur celle de l'hôte pour jouer l'équipe de gauche.
@@ -46,7 +47,8 @@
 #>
 param([switch]$Bot, [switch]$HostBot, [int]$Port = 7777, [int]$Half = 0, [switch]$Server, [switch]$Menus,
       [switch]$Ranked, [int]$Lag = 0, [int]$Loss = 0, [int]$Matches = 1, [string]$TeamA = '', [string]$TeamB = '',
-      [int]$QuitAt = 0, [switch]$NoDirect, [switch]$NoSkip, [switch]$CutDirect, [switch]$League, [switch]$Golden, [switch]$NoCode)
+      [int]$QuitAt = 0, [switch]$NoDirect, [switch]$NoSkip, [switch]$CutDirect, [switch]$League, [switch]$Golden, [switch]$NoCode,
+      [switch]$ResetDb)
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -90,8 +92,12 @@ try {
         catch { throw "Le port UDP $Port est deja pris (un serveur tourne deja ?) : arrete-le, ou choisis -Port." }
         $log = Join-Path $Root 'build\online-server.log'
         New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
-        $srvArgs = @("`"$(Join-Path $Root 'server\server.py')`"", '--port', $Port, '-v',
-                     '--db', "`"$(Join-Path $Root 'build\online-test.db')`"")
+        # base de test Postgres (server\testdb.py) : créée si besoin, vidée avec -ResetDb
+        $dbArgs = @("$(Join-Path $Root 'server\testdb.py')")
+        if (-not $ResetDb) { $dbArgs += '--keep' }
+        $testDb = (& python @dbArgs | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or -not $testDb) { throw 'Base de test injoignable : lancer docker compose up -d postgres' }
+        $srvArgs = @("`"$(Join-Path $Root 'server\server.py')`"", '--port', $Port, '-v', '--db', "`"$testDb`"")
         if ($Server) { $srvArgs += @('--code', 'TEST') }
         if ($League) { $srvArgs += @('--league-code', 'TEST') }
         if ($Lag -gt 0) { $srvArgs += @('--lag', $Lag) }
@@ -149,7 +155,7 @@ try {
 
     if ($Menus) {
         Write-Host 'Dans chaque fenêtre : « en ligne », puis « créer » dans l''une et le code + « rejoindre » dans l''autre.'
-        Write-Host 'Ou « partie rapide » dans les deux : partie classée, comptée dans build\online-test.db.'
+        Write-Host 'Ou « partie rapide » dans les deux : partie classée, comptée dans la base de test.'
     }
     Write-Host 'Ferme les deux jeux pour finir.'
     Start-Sleep -Seconds 10

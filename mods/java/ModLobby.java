@@ -11,7 +11,7 @@ import java.nio.ByteBuffer;
 // redit tout ce que le joueur veut (« je crée un salon », « je suis dans ce salon avec cette équipe »), et le
 // serveur répond à chacun par l'état du salon. Une perte se rattrape donc au paquet suivant.
 class ModLobby {
-   static final int _LOBBY_PROTO = 4; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne
+   static final int _LOBBY_PROTO = 5; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne ; 5 : statistiques
    // jeu -> serveur
    static final int _PKT_FIRST = 16;
    static final int _PKT_HELLO = 16;
@@ -22,6 +22,7 @@ class ModLobby {
    static final int _PKT_QUEUE = 21; // partie rapide : file d'attente
    static final int _PKT_MATCH = 22; // où en est mon match classé
    static final int _PKT_TOP = 23; // demande le classement
+   static final int _PKT_MATCH_STATS = 25; // [mod] statistiques du match, envoyées par le jeu de l'hôte (ModStats.PutMatchStats)
    // serveur -> jeu
    static final int _PKT_INFO = 32;
    static final int _PKT_PEER = 33;
@@ -119,6 +120,8 @@ class ModLobby {
    static int m_nRepLeft = 0; // buts de l'hôte du salon
    static int m_nRepRight = 0;
    static boolean m_bRepFinal = false; // la phase ne changera plus
+   static boolean m_bRepHost = false; // mon jeu simule ce match : c'est lui qui envoie les statistiques
+   static byte[] m_tRepStats = null; // statistiques du match fini (PKT_MATCH_STATS), prises tant que le match existe
    static int m_nRepTries = 0;
    static long m_lNextReport = 0L;
    // issue de mon dernier match classé, donnée par le serveur
@@ -137,7 +140,7 @@ class ModLobby {
    static int m_nClientId = 0;
    static int m_nSeq = 0; // numéro du dernier paquet envoyé
    static int m_nSeqFloor = 0; // les réponses à des paquets plus anciens ne comptent plus
-   static ByteBuffer m_cOut = ByteBuffer.allocate(1024);
+   static ByteBuffer m_cOut = ByteBuffer.allocate(1500); // PKT_MATCH_STATS : jusqu'à 1 300 octets environ
    static long m_lNextSend = 0L;
    static long m_lFirstUnanswered = 0L;
    static int m_nUnanswered = 0;
@@ -826,9 +829,15 @@ class ModLobby {
       m_lDebugQuit = 0L;
       m_bRankedMatch = m_bRanked;
       m_nRepMatch = 0;
-      if (m_bRanked) {
-         // Le serveur compte le match quand les deux jeux lui annoncent la même fin (ReportFrame)
-         m_nLastRankedMatch = nMatchId;
+      m_tRepStats = null;
+      if (m_nNet == _NET_ONLINE) {
+         // Le serveur enregistre le match quand les deux jeux lui annoncent la même fin (ReportFrame) ; un match classé
+         // change aussi l'Elo. Un salon privé est enregistré sans Elo, et le jeu n'en affiche pas l'issue.
+         if (m_bRanked) {
+            m_nLastRankedMatch = nMatchId;
+            m_bResHost = bHost;
+         }
+
          m_nRepMatch = nMatchId;
          m_nRepPhase = _MATCH_PLAYING;
          m_nRepLeft = 0;
@@ -836,7 +845,7 @@ class ModLobby {
          m_bRepFinal = false;
          m_nRepTries = 0;
          m_lNextReport = 0L;
-         m_bResHost = bHost;
+         m_bRepHost = bHost;
       }
 
       if (m_nAuto == 4) {
@@ -906,6 +915,31 @@ class ModLobby {
       // « je joue » : en liaison directe le serveur ne voit plus passer les paquets du match
       b.put((byte)(!m_bRepFinal && ModNet.IsSending() ? 1 : 0));
       Send(b);
+      if (m_bRepFinal && m_tRepStats != null) {
+         // le serveur ne garde que le premier reçu ; pas de réponse : celle de PKT_MATCH suffit
+         b = Begin(_PKT_MATCH_STATS);
+         b.put(m_tRepStats);
+         Send(b);
+      }
+   }
+
+   // [mod] statistiques du match qui vient de finir, pour le site du serveur. Seul le jeu de l'hôte les a (il simule).
+   private static void TakeStats() {
+      m_tRepStats = null;
+      if (!m_bRepHost || !ModNet.MatchReady()) {
+         return;
+      }
+
+      try {
+         ByteBuffer b = ByteBuffer.allocate(m_cOut.capacity() - 13);
+         ModStats.PutMatchStats(b, SoccerModule.m_cMatch, m_nRepMatch);
+         b.flip();
+         m_tRepStats = new byte[b.remaining()];
+         b.get(m_tRepStats);
+         Log("statistiques du match " + m_nRepMatch + " : " + m_tRepStats.length + " octets");
+      } catch (Throwable e) {
+         Log("ERREUR statistiques du match " + m_nRepMatch + " : " + e);
+      }
    }
 
    // Avant de quitter le salon ou le serveur : la fin du match part tout de suite, deux fois
@@ -937,7 +971,8 @@ class ModLobby {
          if (SoccerGame.activeLevelModule.m_bMatchEnd) {
             m_nRepPhase = _MATCH_FINISHED;
             m_bRepFinal = true;
-            Log("match classe " + m_nRepMatch + " fini : " + m_nRepLeft + "-" + m_nRepRight);
+            Log("match en ligne " + m_nRepMatch + " fini : " + m_nRepLeft + "-" + m_nRepRight);
+            TakeStats();
          }
 
          if (m_bRepFinal || nLeft != m_nRepLeft || nRight != m_nRepRight) {
@@ -950,7 +985,7 @@ class ModLobby {
       }
 
       if (m_bRepFinal && ++m_nRepTries > 30) {
-         Log("match classe " + m_nRepMatch + " : pas de reponse du serveur");
+         Log("match en ligne " + m_nRepMatch + " : pas de reponse du serveur");
          m_nRepMatch = 0;
          return;
       }
@@ -970,7 +1005,8 @@ class ModLobby {
       m_nRepPhase = bMatchEnd ? _MATCH_FINISHED : (ModNet.PeerGone() ? _MATCH_PEER_LOST : _MATCH_ABANDON);
       m_bRepFinal = true;
       m_lNextReport = 0L;
-      Log("match classe " + m_nRepMatch + " quitte : " + m_nRepLeft + "-" + m_nRepRight + ", phase " + m_nRepPhase);
+      Log("match en ligne " + m_nRepMatch + " quitte : " + m_nRepLeft + "-" + m_nRepRight + ", phase " + m_nRepPhase);
+      TakeStats();
 
       try {
          FlushReport();

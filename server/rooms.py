@@ -12,6 +12,7 @@ match aillent d'un jeu à l'autre sans passer par lui. Il reste le relais de sec
 """
 import ipaddress
 import random
+import time
 
 import protocol as P
 
@@ -53,6 +54,8 @@ class Session:
         self.last_match = now  # dernier paquet de match de ce jeu : relayé, ou annoncé par lui (MATCH_LINKED)
         self.report = None  # dernier PKT_MATCH : (numéro du match, phase, buts de l'hôte, buts de l'invité)
         self.result = (0, P.RESULT_NONE, 0, 0)  # issue de son dernier match classé (voir protocol.make_info)
+        self.state = None  # dernier PKT_STATE lu (protocol.read_state) : équipe, tactique...
+        self.match_state = None  # dernier PKT_STATE qui portait un numéro de match
 
     def __repr__(self):
         return "%s (%s:%d)" % (self.name, self.addr[0], self.addr[1])
@@ -74,6 +77,7 @@ class Room:
         self.claim_at = None  # heure où un joueur a dit avoir perdu l'autre, pas encore confirmé
         self.decided = set()  # numéros des matchs déjà comptés ou annulés
         self.league = None  # (numéro de la ligue, clé du match) : salon ouvert pour un match de ligue entre deux joueurs
+        self.started_at = None  # heure réelle du début du match en cours (enregistrée avec le match)
 
     def members(self):
         return 2 if self.guest else 1
@@ -105,6 +109,9 @@ class Lobby:
         self.queue_grow = queue_grow  # points d'Elo ajoutés à cet écart par seconde d'attente, sans limite
         self.direct = direct  # donner aux joueurs d'un salon l'adresse de l'autre (liaison directe)
         self.leagues = None  # leagues.Leagues : ligues en ligne
+        self.clock = time.time  # heure réelle, pour la base
+        self.pending_stats = {}  # (identifiant du jeu de l'hôte, n° du match) -> statistiques arrivées avant la fin
+        self.recorded = {}  # (identifiant du jeu de l'hôte, n° du match) -> n° du match dans la base, sans statistiques
         self.now = 0.0
         self.log = lambda text: None
 
@@ -156,7 +163,7 @@ class Lobby:
         """Le jeu d'un joueur a été relancé (nouvel identifiant, même compte) : il retrouve son salon."""
         room = old.room
         if room is not None:
-            if room.ranked and room.live and room.host is old:
+            if room.live and room.host is old:
                 # l'hôte simulait le match : il est perdu avec son jeu
                 self.exit_live(old, "jeu de l'hôte relancé")
             if room.host is old:
@@ -358,8 +365,8 @@ class Lobby:
             if s.room is not None:
                 if s.room.league == (lg.id, key):
                     return P.LGE_NONE  # déjà ouvert
-                if s.room.ranked and s.room.live:
-                    return P.LGE_NONE  # l'autre finit un match classé
+                if s.room.live:
+                    return P.LGE_NONE  # l'autre finit un match
         if host.mod_version != guest.mod_version:
             return P.LGE_VERSION
         code = self.new_code()
@@ -383,13 +390,23 @@ class Lobby:
         """(ligue, clé) des matchs de ligue entre joueurs ouverts dans un salon : le délai les épargne."""
         return {room.league for room in self.rooms.values() if room.league is not None}
 
-    # --- matchs classés ---
+    # --- matchs suivis : classés, de ligue, et dans un salon privé (enregistrés sans Elo) ---
+
+    def set_state(self, session, state):
+        """PKT_STATE lu : équipe, tenue et tactique que le joueur montre à l'autre."""
+        session.state = state
+        if state["match_id"]:
+            session.match_state = state
+
+    def status(self):
+        """(joueurs connectés, en file d'attente, salons, matchs en cours) pour la table server_status."""
+        return (len(self.sessions), len(self.queue), len(self.rooms), sum(1 for r in self.rooms.values() if r.live))
 
     def match_packet(self, session, now):
         """Ce joueur envoie des paquets de match : le serveur en relaie un, ou le jeu le dit (liaison directe)."""
         session.last_match = now
         room = session.room
-        if room.ranked and room.live:
+        if room.live:
             room.engaged.add(session is room.host)
 
     def report(self, session, match_id, phase, score_host, score_guest, flags, now):
@@ -397,7 +414,7 @@ class Lobby:
         self.now = now
         session.report = (match_id, phase, score_host, score_guest)
         room = session.room
-        if room is None or not room.ranked or match_id == 0 or match_id in room.decided:
+        if room is None or match_id == 0 or match_id in room.decided:
             return
         peer = room.peer(session)
         peer_report = peer.report if peer is not None else None
@@ -409,7 +426,8 @@ class Lobby:
             room.live = match_id
             room.engaged = set()
             room.claim_at = None
-            self.log("partie classée %s : match %d en cours" % (room.code, match_id))
+            room.started_at = self.clock()
+            self.log("%s %s : match %d en cours" % (self.room_kind(room), room.code, match_id))
         if flags & P.MATCH_LINKED:
             self.match_packet(session, now)
 
@@ -437,7 +455,7 @@ class Lobby:
     def exit_live(self, session, why, silent=False):
         """Le joueur sort de son salon (départ, silence, jeu relancé) : s'il y joue un match classé, on tranche."""
         room = session.room
-        if room is None or not room.ranked or not room.live:
+        if room is None or not room.live:
             return
         peer = room.peer(session)
         mine = session.report if session.report is not None and session.report[0] == room.live else None
@@ -457,29 +475,90 @@ class Lobby:
         else:
             self.forfeit(room, session, why)
 
+    @staticmethod
+    def room_kind(room):
+        return "ligue" if room.league is not None else ("partie classée" if room.ranked else "salon privé")
+
+    @staticmethod
+    def side_info(session, match_id, teams, side):
+        """Ce qu'on enregistre d'un côté du match : compte, équipe et tactique (dernier PKT_STATE de ce match)."""
+        state = session.match_state if session.match_state and session.match_state["match_id"] == match_id else session.state
+        if teams is not None:
+            animal, clothes = teams[2 * side], teams[2 * side + 1]
+        else:
+            animal, clothes = (state["animal"], state["clothes"]) if state else (None, None)
+        return dict(player=session.player, name=session.player.name if session.player else session.name,
+                    animal=animal, clothes=clothes, tactic=state["tactic"] if state else None)
+
     def settle(self, room, score_host, score_guest, loser=None, why=""):
-        """Compte le match en cours du salon. loser : le joueur forfait."""
+        """Compte le match en cours du salon. loser : le joueur forfait. Un salon privé est enregistré sans Elo."""
         match_id = room.live
+        started = room.started_at
         self.close_match(room)
         host, guest = room.host, room.guest
-        if self.store is None or host is None or guest is None or host.player is None or guest.player is None:
+        if self.store is None or host is None or guest is None:
             return
+        rated = room.ranked and host.player is not None and guest.player is not None
+        if room.ranked and not rated:
+            return  # partie classée sans compte : ne devrait pas arriver (la file d'attente demande un compte)
         goals = (score_host, score_guest)
         if loser is not None:
             # Forfait : défaite d'au moins un but d'écart, ou de l'écart que le joueur subissait en partant
             # (sinon quitter un match mal engagé coûterait moins cher que le finir)
             margin = max(1, score_guest - score_host if loser is host else score_host - score_guest)
             goals = (0, margin) if loser is host else (margin, 0)
-        delta_host, delta_guest = self.store.record(host.player, guest.player, score_host, score_guest, goals, loser is not None)
+        # le jeu de l'hôte simule : ses équipes et son stade font foi
+        hs = host.match_state if host.match_state and host.match_state["match_id"] == match_id else None
+        teams = hs["teams"] if hs else None
+        sides = [self.side_info(host, match_id, teams, 0), self.side_info(guest, match_id, teams, 1)]
+        key = (host.client_id, match_id)
+        stats = self.pending_stats.pop(key, None)
+        kind = "league" if room.league is not None else ("ranked" if room.ranked else "private")
+        try:
+            db_id, (delta_host, delta_guest) = self.store.record_match(
+                sides, (score_host, score_guest), goals, kind=kind, rated=rated,
+                forfeit_side=None if loser is None else (0 if loser is host else 1), room_code=room.code,
+                league=room.league, started=started, stadium=hs["level"] if hs else None,
+                half_seconds=hs["half"] if hs else None, mod_version=host.mod_version, stats=stats)
+        except Exception as e:  # base injoignable : le match est perdu pour la base, pas pour la ligue
+            self.log("ERREUR enregistrement du match %d (%s) : %s" % (match_id, room.code, e))
+            db_id, delta_host, delta_guest, rated = None, 0, 0, False
+        if db_id is not None and stats is None:
+            self.recorded[key] = db_id  # les statistiques de l'hôte arriveront peut-être juste après
+            while len(self.recorded) > 1000:
+                del self.recorded[next(iter(self.recorded))]
         if room.league is not None and self.leagues is not None:
             # match de ligue : le score retenu pour l'Elo (forfait compris) entre dans la ligue
             self.leagues.match_result(room.league[0], room.league[1], goals[0], goals[1])
         for session, delta in ((host, delta_host), (guest, delta_guest)):
             how = P.HOW_PLAYED if loser is None else (P.HOW_MY_FORFEIT if session is loser else P.HOW_PEER_FORFEIT)
-            session.result = (match_id, P.RESULT_RATED, how, delta)
-        self.log("partie classée %s : match %d, %r %d-%d %r%s, Elo %+d et %+d" % (
-            room.code, match_id, host.player, score_host, score_guest, guest.player,
-            " (forfait de %r : %s)" % (loser.player, why) if loser is not None else "", delta_host, delta_guest))
+            # salon privé : le jeu n'affiche rien, la réponse sert seulement à arrêter ses comptes rendus
+            session.result = (match_id, P.RESULT_RATED if rated else P.RESULT_VOID, how, delta)
+        names = [s.player if s.player is not None else s.name for s in (host, guest)]
+        self.log("%s %s : match %d, %r %d-%d %r%s%s%s" % (
+            self.room_kind(room), room.code, match_id, names[0], score_host, score_guest, names[1],
+            " (forfait de %r : %s)" % (names[0] if loser is host else names[1], why) if loser is not None else "",
+            ", Elo %+d et %+d" % (delta_host, delta_guest) if rated else "",
+            ", statistiques" if stats is not None else ""))
+
+    def match_stats(self, session, stats):
+        """PKT_MATCH_STATS : les statistiques du match, envoyées par le jeu de l'hôte (c'est lui qui simule)."""
+        match_id = stats["match_id"]
+        key = (session.client_id, match_id)
+        db_id = self.recorded.pop(key, None)
+        if db_id is not None:
+            try:
+                self.store.attach_stats(db_id, stats)
+                self.log("match %d : statistiques de %r ajoutées" % (match_id, session))
+            except Exception as e:
+                self.log("ERREUR statistiques du match %d : %s" % (match_id, e))
+            return
+        room = session.room
+        if room is None or room.host is not session or match_id == 0 or match_id in room.decided:
+            return  # pas l'hôte, ou match déjà tranché (annulé, ou ses statistiques déjà reçues)
+        self.pending_stats[key] = stats
+        while len(self.pending_stats) > 1000:
+            del self.pending_stats[next(iter(self.pending_stats))]
 
     def forfeit(self, room, loser, why):
         # Le score retenu est celui que le joueur forfait a lui-même annoncé en dernier
@@ -492,7 +571,7 @@ class Lobby:
         for session in (room.host, room.guest):
             if session is not None:
                 session.result = (match_id, P.RESULT_VOID, 0, 0)
-        self.log("partie classée %s : match %d pas compté (%s)" % (room.code, match_id, why))
+        self.log("%s %s : match %d pas compté (%s)" % (self.room_kind(room), room.code, match_id, why))
 
     def close_match(self, room):
         room.decided.add(room.live)

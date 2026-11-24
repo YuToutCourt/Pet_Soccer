@@ -1,5 +1,5 @@
 """Ligues en ligne : plusieurs joueurs dans une ligue à 14, les autres équipes jouées par l'IA. Gardées par le
-serveur dans la base SQLite (elles durent des jours), logique dans league.py. Voir notes/online-league.md.
+serveur dans la base Postgres (table leagues de schema.sql, elles durent des jours), logique dans league.py. Voir notes/online-league.md.
 
 - Un joueur crée une ligue (code de 4 lettres, réglages tirés de son league.scr) ; ses amis la rejoignent avec ce
   code et prennent chacun une équipe différente. Le créateur la lance : les équipes restantes sont à l'IA.
@@ -22,17 +22,6 @@ from rooms import CODE_LETTERS, CODE_LENGTH
 ANIMALS = 14  # EAnimals._ANIMALS_COUNT : toutes les équipes jouent la ligue
 WANT_FRESH = 3.0  # secondes pendant lesquelles un LG_PLAY vaut « j'attends l'autre joueur »
 DELAYS = (0, 24 * 60 * 30)  # délai d'une journée accepté, en minutes (0 : pas de délai)
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS leagues (
-    id INTEGER PRIMARY KEY,
-    code TEXT NOT NULL,
-    closed INTEGER NOT NULL DEFAULT 0,
-    created REAL NOT NULL,
-    updated REAL NOT NULL,
-    data TEXT NOT NULL
-);
-"""
 
 
 class Member:
@@ -116,7 +105,7 @@ class Leagues:
     def __init__(self, db, rng=None, grace=20 * 60, keep_over=14 * 24 * 3600, max_leagues=300, fixed_code=None,
                  delay_scale=60.0, clock=time.time):
         self.clock = clock  # heure réelle : les ligues durent des jours et survivent à un redémarrage du serveur
-        self.db = db  # connexion SQLite (celle de store.Store), None : rien n'est gardé (tests)
+        self.db = db  # store.Database (celle de store.Store), None : rien n'est gardé (tests)
         self.rng = rng or random.Random()
         self.grace = grace  # secondes pendant lesquelles un match contre l'IA en cours échappe au délai
         self.keep_over = keep_over  # une ligue finie reste visible ce temps-là
@@ -129,14 +118,12 @@ class Leagues:
         self.next_id = 1
         self.log = lambda text: None
         if db is not None:
-            db.executescript(_SCHEMA)
-            db.commit()
-            for row_id, data in db.execute("SELECT id, data FROM leagues WHERE closed = 0"):
+            for row_id, data in db.all("SELECT id, data FROM leagues WHERE NOT closed"):
                 try:
-                    self.add(OnlineLeague.from_dict(json.loads(data)))
+                    self.add(OnlineLeague.from_dict(data if isinstance(data, dict) else json.loads(data)))
                 except (ValueError, KeyError, TypeError) as e:
                     print("ligue %d illisible dans la base : %s" % (row_id, e))
-            self.next_id = 1 + (db.execute("SELECT MAX(id) FROM leagues").fetchone()[0] or 0)
+            self.next_id = 1 + (db.one("SELECT MAX(id) FROM leagues")[0] or 0)
 
     def add(self, lg):
         self.by_code[lg.code] = lg
@@ -149,9 +136,10 @@ class Leagues:
         if self.db is None:
             return
         data = json.dumps(lg.to_dict(), separators=(",", ":"))
-        self.db.execute("INSERT OR REPLACE INTO leagues (id, code, closed, created, updated, data) VALUES (?, ?, ?, ?, ?, ?)",
-                        (lg.id, lg.code, int(closed), lg.created, now, data))
-        self.db.commit()
+        self.db.execute("INSERT INTO leagues (id, code, closed, created, updated, data) VALUES (%s, %s, %s, %s, %s, %s::jsonb)"
+                        " ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, closed = EXCLUDED.closed,"
+                        " updated = EXCLUDED.updated, data = EXCLUDED.data",
+                        (lg.id, lg.code, bool(closed), lg.created, now, data))
 
     def new_code(self):
         if self.fixed_code:

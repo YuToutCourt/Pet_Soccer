@@ -16,7 +16,8 @@ class ModNet {
    static final int _MAGIC = 0x50534E31; // "PSN1"
    // Version du mod pour le jeu en ligne : à augmenter dès que les paquets ou les règles du match changent.
    // Le serveur ne met dans un même salon que deux jeux de même version.
-   static final int _MOD_VERSION = 7; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client
+   static final int _MOD_VERSION = 8; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
+   // 8 : statistiques des matchs en ligne (PKT_MATCH_STATS), matchs des salons privés enregistrés par le serveur
    static final int _ROLE_NONE = 0;
    static final int _ROLE_HOST = 1;
    static final int _ROLE_CLIENT = 2;

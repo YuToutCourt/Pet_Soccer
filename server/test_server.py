@@ -2,21 +2,26 @@
 
     python server\\test_server.py
 
+Il faut le Postgres de docker-compose.yml (docker compose up -d postgres) : les tests vident et remplissent la base
+pet_soccer_test (testdb.py, ou la variable TEST_DATABASE_URL), jamais celle des vrais joueurs.
+
 Affiche « OK » pour chaque point vérifié et sort avec le code 1 au premier échec.
 """
 import os
 import random
 import socket
-import shutil
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 import types
 
+import psycopg
+
 import protocol as P
 import rooms
+import store
+import testdb
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MOD_VERSION = 4
@@ -124,7 +129,7 @@ def free_port():
 
 def start_server(port, *args):
     proc = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py"), "--host", "127.0.0.1", "--port", str(port),
-                             "--db", os.path.join(TMP, "test.db")]
+                             "--db", DB_URL]
                             + list(args), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     probe = Game(port, 999, "sonde", token="x")  # jeton refusé : la sonde n'a pas de compte
     for _ in range(30):
@@ -467,6 +472,156 @@ def test_persist(port):
     check("le classement aussi", a.top()["total"] >= 2)
 
 
+# ------------------------------------------------------------------ matchs enregistrés : salon privé, tactiques, statistiques
+
+TACTIC_A = "BETON;LIBERO,STOPPEUR,DEFENSEUR,DEFENSEUR,MILIEU,PIVOT;200/230,180/500,200/780,440/390,410/500,440/610;-;-;-"
+
+
+def team_stats(shots, goals, slot_roles=True):
+    """Statistiques d'une équipe, comme les enverrait le jeu de l'hôte (protocol.read_match_stats)."""
+    players = [dict(number=n, slot=(n - 1 if slot_roles else -1) if n else -1, goals=1 if n == 5 and goals else 0,
+                    shots=2 if n == 5 else 0, passes=4, passes_ok=3, recoveries=1, distance=900 + n,
+                    depth=0.1 if n == 0 else 0.5, lateral=0.5) for n in range(7)]
+    return dict(shots=shots, possession=55, passes_ok=21, passes=28, recoveries=9, saves=2, supers=1, super_types=4,
+                max_deficit=0, goals=[dict(minute=10 + 20 * i, number=5, own_goal=False) for i in range(goals)],
+                super_events=[dict(minute=33, type=2)],
+                shot_events=[dict(minute=10, number=5, depth=0.8, lateral=0.4, result="goal"),
+                       dict(minute=50, number=3, depth=0.6, lateral=0.7, result="saved")],
+                players=players, heatmap=[i % 256 for i in range(96)], ball_heatmap=[255 - i for i in range(96)])
+
+
+def send_stats(game, match_id, teams, golden=False):
+    t = teams
+    game.seq += 1
+    game.sock.sendto(P.make_lobby(P.PKT_MATCH_STATS, game.client_id, game.seq, P.make_match_stats(match_id, t, golden)),
+                     game.server)
+
+
+def db_one(sql, params=()):
+    with psycopg.connect(DB_URL) as conn:
+        return conn.execute(sql, params).fetchone()
+
+
+def db_all(sql, params=()):
+    with psycopg.connect(DB_URL) as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def test_private(port):
+    a = Game(port, 101, "Alice", token="jeton%027d" % 101)
+    b = Game(port, 102, "Bob", token="jeton%027d" % 102)
+    c = Game(port, 103, "Sans compte", token="court")  # jeton refusé : pas de compte
+    for g in (a, b, c):
+        g.hello()
+    check("le serveur écrit son état dans la base (server_status)", db_one("SELECT online FROM server_status") is not None)
+    code = a.ask(P.PKT_CREATE)["code"]
+    b.ask(P.PKT_JOIN, P.put_string(code))
+    teams = (7, 0, 12, 1)
+    a.ask(P.PKT_STATE, P.make_state(True, True, 7, 0, TACTIC_A, level=3, half=120, match_id=601, teams=teams))
+    b.ask(P.PKT_STATE, P.make_state(True, False, 12, 1, "ORIGINE", level=3, half=120, match_id=601, teams=teams))
+    play(a, b, 601)
+    send_stats(b, 601, [team_stats(99, 9), team_stats(99, 9)])  # l'invité ne simule pas : ignoré
+    send_stats(a, 601, [team_stats(7, 3), team_stats(4, 1, slot_roles=False)], golden=True)
+    a.report(601, P.MATCH_FINISHED, 3, 1)
+    info = b.report(601, P.MATCH_FINISHED, 3, 1)
+    check("salon privé : les deux jeux annoncent 3-1, le match est tranché sans Elo",
+          info["result"]["match"] == 601 and info["result"]["outcome"] == P.RESULT_VOID and info["elo"] == 1000
+          and info["games"] == 0)
+    m = db_one("SELECT id, kind, rated, outcome, score_host, score_guest, stadium, half_seconds, golden_goal, has_stats,"
+               " room_code FROM matches WHERE room_code = %s ORDER BY id", (code,))
+    check("... et enregistré : salon privé, 3-1, stade 3, mi-temps 120 s, but en or, statistiques",
+          m is not None and m[1:] == ("private", False, "played", 3, 1, 3, 120, True, True, code))
+    rows = db_all("SELECT side, name, animal, clothes, goals, result, elo_before, scheme, roles, layouts, shots"
+                  " FROM match_players WHERE match_id = %s ORDER BY side", (m[0],))
+    check("équipes de l'hôte : Alice (7, tenue 0) gagne, Bob (12, tenue 1) perd, sans Elo",
+          [r[:7] for r in rows] == [(0, "Alice", 7, 0, 3, "W", None), (1, "Bob", 12, 1, 1, "L", None)])
+    check("tactique de l'hôte lue : schéma, rôles, placement de jeu",
+          rows[0][7] == "BETON" and rows[0][8][0] == "LIBERO" and rows[0][8][5] == "PIVOT"
+          and rows[0][9]["play"][0] == [0.2, 0.23] and rows[0][9]["kickoff"] is None)
+    check("tactique de l'invité : jeu d'origine, sans rôles", rows[1][7] == "ORIGINE" and rows[1][8] is None)
+    check("les statistiques sont celles de l'hôte, pas celles de l'invité", rows[0][10] == 7 and rows[1][10] == 4)
+    fb = db_all("SELECT side, number, slot, role, goals, distance FROM match_footballers WHERE match_id = %s"
+                " ORDER BY side, number", (m[0],))
+    check("7 joueurs par équipe, avec le rôle de leur place (gardien sans rôle)",
+          len(fb) == 14 and fb[0][2:4] == (-1, None) and fb[1][2:4] == (0, "LIBERO") and fb[6][2:4] == (5, "PIVOT")
+          and fb[5][4] == 1 and fb[7][3] is None)
+    ev = db_all("SELECT kind, side, minute, result FROM match_events WHERE match_id = %s ORDER BY seq", (m[0],))
+    kinds = [e[0] for e in ev]
+    check("fil du match : 4 buts, 2 supers, 4 tirs (%d événements)" % len(ev),
+          kinds.count("goal") == 4 and kinds.count("super") == 2 and kinds.count("shot") == 4)
+    heat = db_one("SELECT heatmap, ball_heatmap, heat_depth, heat_lateral FROM match_players WHERE match_id = %s AND side = 0",
+                  (m[0],))
+    check("heatmaps 12 x 8 gardées", len(heat[0]) == 96 and heat[0][5] == 5 and heat[1][0] == 255 and heat[2:] == (12, 8))
+
+    # statistiques arrivées après la fin
+    play(a, b, 602)
+    a.report(602, P.MATCH_FINISHED, 0, 0)
+    b.report(602, P.MATCH_FINISHED, 0, 0)
+    check("match nul sans statistiques : enregistré",
+          db_one("SELECT has_stats FROM matches WHERE room_code = %s ORDER BY id DESC", (code,)) == (False,))
+    send_stats(a, 602, [team_stats(2, 0), team_stats(3, 0)])
+    send_stats(a, 602, [team_stats(50, 0), team_stats(50, 0)])  # redites : la première seule compte
+    a.ask(P.PKT_STATE, b"")
+    m2 = db_one("SELECT id, has_stats FROM matches WHERE room_code = %s ORDER BY id DESC", (code,))
+    check("... les statistiques arrivées juste après sont ajoutées au match",
+          m2[1] and db_one("SELECT shots FROM match_players WHERE match_id = %s AND side = 1", (m2[0],)) == (3,))
+
+    # forfait dans un salon privé
+    play(a, b, 603)
+    a.report(603, P.MATCH_PLAYING, 2, 0)
+    b.report(603, P.MATCH_PLAYING, 2, 0)
+    b.ask(P.PKT_LEAVE)
+    m3 = db_one("SELECT outcome, forfeit_side, rated FROM matches WHERE room_code = %s ORDER BY id DESC", (code,))
+    check("l'invité quitte le match : forfait enregistré, toujours sans Elo", m3 == ("forfeit", 1, False))
+    check("... et Bob n'a toujours aucun match classé", b.hello()["games"] == 0)
+
+    # un invité sans compte
+    c.ask(P.PKT_JOIN, P.put_string(code))
+    c.ask(P.PKT_STATE, P.make_state(True, False, 3, 0, "", match_id=604, teams=(7, 0, 3, 0)))
+    play(a, c, 604)
+    a.report(604, P.MATCH_FINISHED, 1, 1)
+    c.report(604, P.MATCH_FINISHED, 1, 1)
+    row = db_one("SELECT mp.player_id, mp.name, mp.animal, mp.result FROM match_players mp JOIN matches m ON m.id = mp.match_id"
+                 " WHERE m.room_code = %s AND mp.side = 1 ORDER BY m.id DESC", (code,))
+    check("un invité sans compte est enregistré par son nom", row == (None, "Sans compte", 3, "D"))
+
+    ranked = db_all("SELECT mp.elo_before, mp.elo_after, mp.delta FROM match_players mp JOIN matches m ON m.id = mp.match_id"
+                    " WHERE m.kind = 'ranked' AND m.rated")
+    check("les parties classées des tests précédents ont leur Elo avant et après (%d lignes)" % len(ranked),
+          len(ranked) >= 8 and all(r[1] - r[0] == r[2] for r in ranked))
+
+
+def test_parse():
+    """Lecture des paquets et des tactiques, sans serveur."""
+    st = P.read_state(P.make_state(True, True, 13, 2, TACTIC_A, level=17, half=300, match_id=123456, teams=(13, 2, 4, 1)))
+    check("PKT_STATE relu", st == dict(ready=True, host=True, animal=13, clothes=2, tactic=TACTIC_A, level=17, half=300,
+                                        match_id=123456, teams=(13, 2, 4, 1)))
+    try:
+        P.read_state(P.make_state(tactic="ABC")[:-2])
+        check("PKT_STATE tronqué refusé", False)
+    except ValueError:
+        check("PKT_STATE tronqué refusé", True)
+    t = store.parse_tactic(TACTIC_A)
+    check("tactique découpée", t["scheme"] == "BETON" and len(t["roles"]) == 6 and t["layouts"]["play"][2] == [0.2, 0.78]
+          and t["layouts"]["throw"] is None)
+    check("tactique d'origine : pas de rôles", store.parse_tactic("ORIGINE") == dict(
+        scheme="ORIGINE", roles=None, layouts=dict(play=None, kickoff=None, throw=None, goalkick=None)))
+    check("tactique vide : rien", store.parse_tactic("") is None)
+    teams = [team_stats(5, 2), team_stats(1, 0)]
+    body = P.make_match_stats(77, teams, True)
+    data = P.make_lobby(P.PKT_MATCH_STATS, 1, 1, body)
+    s = P.read_match_stats(data)
+    check("PKT_MATCH_STATS relu (%d octets)" % len(data),
+          s["match_id"] == 77 and s["golden_goal"] and s["teams"][0]["shots"] == 5 and len(s["teams"][0]["goals"]) == 2
+          and s["teams"][1]["players"][6]["distance"] == 906 and s["teams"][1]["heatmap"] == teams[1]["heatmap"]
+          and abs(s["teams"][0]["shot_events"][0]["depth"] - 0.8) < 0.01 and len(data) < 1400)
+    try:
+        P.read_match_stats(data[:-10])
+        check("PKT_MATCH_STATS tronqué refusé", False)
+    except (ValueError, struct.error):
+        check("PKT_MATCH_STATS tronqué refusé", True)
+
+
 # ------------------------------------------------------------------ ligue en ligne
 
 LEAGUE_SETTINGS = dict(qualifiers=4, reset=False, points_win=3, points_draw=1, form=2.0, goals_per_minute=0.2,
@@ -751,31 +906,31 @@ def test_link_scope():
     check("--no-direct : aucune adresse donnée", la == lb == (0, P.NO_ADDR, P.NO_ADDR))
 
 
+print("--- lecture des paquets")
+test_parse()
 print("--- file d'attente par Elo")
 test_queue_elo()
 print("--- liaison directe : adresses")
 test_link_scope()
 
 LEAGUE_ARGS = ["--league-code", "LIGA", "--league-minute", "0.05", "--league-grace", "0.1"]
-TMP = tempfile.mkdtemp(prefix="petsoccer-test-")  # la base de test : jamais celle des vrais joueurs
-try:
-    for name, test, args in (("salons", test_rooms, []), ("silence", test_timeout, ["--timeout", "2", "--code", "test"]),
-                             ("invité muet", test_stale, ["--stale", "1.5"]),
-                             ("mauvaise connexion", test_lag, ["--lag", "150", "--loss", "50"]),
-                             ("partie classée", test_ranked, []),
-                             ("classé : joueur disparu", test_ranked_lost, ["--lost", "1", "--claim", "2", "--timeout", "3"]),
-                             ("classé : jeu relancé", test_takeover, ["--takeover", "1"]),
-                             ("comptes gardés", test_persist, []),
-                             ("ligue en ligne", test_league, LEAGUE_ARGS),
-                             ("ligue gardée", test_league_persist, LEAGUE_ARGS)):
-        print("--- " + name)
-        port = free_port()
-        server = start_server(port, *args)
-        try:
-            test(port)
-        finally:
-            server.kill()
-            server.wait()
-finally:
-    shutil.rmtree(TMP, ignore_errors=True)
+DB_URL = testdb.fresh_test_db()  # la base de test, vidée : jamais celle des vrais joueurs
+for name, test, args in (("salons", test_rooms, []), ("silence", test_timeout, ["--timeout", "2", "--code", "test"]),
+                         ("invité muet", test_stale, ["--stale", "1.5"]),
+                         ("mauvaise connexion", test_lag, ["--lag", "150", "--loss", "50"]),
+                         ("partie classée", test_ranked, []),
+                         ("classé : joueur disparu", test_ranked_lost, ["--lost", "1", "--claim", "2", "--timeout", "3"]),
+                         ("classé : jeu relancé", test_takeover, ["--takeover", "1"]),
+                         ("comptes gardés", test_persist, []),
+                         ("salon privé enregistré", test_private, []),
+                         ("ligue en ligne", test_league, LEAGUE_ARGS),
+                         ("ligue gardée", test_league_persist, LEAGUE_ARGS)):
+    print("--- " + name)
+    port = free_port()
+    server = start_server(port, *args)
+    try:
+        test(port)
+    finally:
+        server.kill()
+        server.wait()
 print("%d vérifications réussies" % checks)

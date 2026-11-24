@@ -1,69 +1,124 @@
-"""Serveur web de stats Pet Soccer — classement, historique des matchs, profil joueur.
+"""Site de stats Pet Soccer — classement, matchs, profil joueur, détail d'un match, méta des équipes et tactiques.
 
-    python server\\web.py [--db fichier] [--port 8080] [-v]
+    python web\\web.py [--db postgresql://...] [--port 8080] [-v]
+    gunicorn -b 0.0.0.0:8080 web:app        (docker-compose.yml : variable DATABASE_URL)
 
-Lit players.db en lecture seule (ne modifie rien). Lance séparément du serveur de jeu.
-Installer Flask d'abord si besoin : pip install flask
+Lit la base Postgres du serveur de jeu (server/server.py, schéma dans server/schema.sql) en lecture seule : il ne
+modifie rien. Dépendances : pip install -r web\\requirements.txt
 """
 import argparse
 import os
-import sqlite3
 import time
 from datetime import datetime
 
-from flask import Flask, abort, redirect, render_template_string, request, url_for
+import psycopg
+from psycopg.rows import dict_row
+from flask import Flask, abort, g, redirect, render_template, request, url_for
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "players.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # --- données du jeu ---
 
 TEAMS = {
-    0:  ("Bearchester United",     "🐻", "#8B5E3C"),
-    1:  ("Bullrusia Dortmund",     "🐂", "#FFD700"),
-    2:  ("Deportivo la Chickeno",  "🐓", "#E8A020"),
-    3:  ("Dynamo Tiranosaurus",    "🦕", "#4CAF50"),
-    4:  ("Frogen Leverkusen",      "🐸", "#2ECC71"),
-    5:  ("Giraffinaikos",          "🦒", "#F4A261"),
-    6:  ("Wisla Gorillakov",       "🦍", "#6C757D"),
-    7:  ("Lyon Lions",             "🦁", "#E74C3C"),
-    8:  ("Ajax Panterdam",         "🐆", "#E67E22"),
-    9:  ("Shalke Sharks",          "🦈", "#3498DB"),
-    10: ("Fc Turtelona",           "🐢", "#1ABC9C"),
-    11: ("As Robots",              "🤖", "#9B59B6"),
-    12: ("Real Pandrid",           "🐼", "#ECF0F1"),
-    13: ("Borussia Tigermund",     "🐯", "#F39C12"),
+    0:  ("Bearchester United",     "🐻", "#8B5E3C", "T_Logo_Bearchester.png"),
+    1:  ("Bullrusia Dortmund",     "🐂", "#FFD700", "T_Logo_Bullrusia.png"),
+    2:  ("Deportivo la Chickeno",  "🐓", "#E8A020", "T_Logo_Chickena.png"),
+    3:  ("Dynamo Tiranosaurus",    "🦕", "#4CAF50", "T_Logo_Dynamo.png"),
+    4:  ("Frogen Leverkusen",      "🐸", "#2ECC71", "T_Logo_Frogen.png"),
+    5:  ("Giraffinaikos",          "🦒", "#F4A261", "T_Logo_Giraffinaikos.png"),
+    6:  ("Wisla Gorillakov",       "🦍", "#6C757D", "T_Logo_Gorilakov.png"),
+    7:  ("Lyon Lions",             "🦁", "#E74C3C", "T_Logo_Lions.png"),
+    8:  ("Ajax Panterdam",         "🐆", "#E67E22", "T_Logo_Panterdam.png"),
+    9:  ("Shalke Sharks",          "🦈", "#3498DB", "T_Logo_Sharks.png"),
+    10: ("Fc Turtelona",           "🐢", "#1ABC9C", "T_Logo_Turtelona.png"),
+    11: ("As Robots",              "🤖", "#9B59B6", "T_Logo_Robots.png"),
+    12: ("Real Pandrid",           "🐼", "#ECF0F1", "T_Logo_Pandrid.png"),
+    13: ("Borussia Tigermund",     "🐯", "#F39C12", "T_Logo_Tigermund.png"),
 }
 
+# Joueurs de chaque équipe (texts.scr, Team<Animal>Players) : index 0 = gardien, 1..6 = joueurs de champ
+FOOTBALLERS = {
+    0: ["Beartez", "Silvet", "Cabell", "Owel", "Banc", "Honeys", "Furson"],
+    1: ["Laman", "Worm", "Hornler", "Picken", "Biboc", "Dudu", "Buller"],
+    2: ["Blufon", "Djalima", "Tistan", "Palbo", "Maycray", "Chickaldo", "Beako"],
+    3: ["Shokolovsky", "Hoko", "Dmitrozaur", "Kardazaur", "Shevchoktyl", "Rexbrov", "Jurassov"],
+    4: ["Bit", "Ziko", "Frogler", "Kissen", "Dissel", "Backlack", "Greenvald"],
+    5: ["Nikolipokis", "Vitanodis", "Binasos", "Georgos", "Zebronis", "Giraffis", "Longneck"],
+    6: ["Donkdek", "Gorilec", "Franco", "Kos", "Gulavik", "Rabbit", "Monkeysky"],
+    7: ["Pupet", "Papaca", "Roaret", "Brucet", "Ardenson", "Clawinho", "Mane"],
+    8: ["Glim", "Mixel", "VarDenVan", "Hopsam", "Pantasek", "VanPan", "Pinker"],
+    9: ["Shreck", "Halok", "Valbok", "Nec", "Bierteeff", "Snack", "Sharptooth"],
+    10: ["Banano", "Pulol", "Rolado", "Sorgi", "Turtelsson", "DeBro", "Shellbo"],
+    11: ["Cajax", "Z-B", "Z-G", "R-M", "Batterystuta", "N-S", "R4"],
+    12: ["Bambillas", "Hierpanda", "Bamberto Carlos", "Makebambou", "Zipandane", "Pandigo", "Raulpanda"],
+    13: ["Tigermann", "Grrrns", "Rawrhl", "Stripicky", "Felinoso", "Kroller", "Rayuraldo"],
+}
+
+ROLES = {
+    "LIBERO": "Libéro", "STOPPEUR": "Stoppeur", "DEFENSEUR": "Défenseur", "LATERAL": "Latéral",
+    "MILIEU": "Milieu", "AILIER": "Ailier", "ATTAQUANT": "Attaquant", "PIVOT": "Pivot",
+}
+SCHEMES = {
+    "ORIGINE": "Jeu d'origine", "EQUILIBRE": "Équilibre", "BETON": "Béton", "CONTRE": "Contre",
+    "INDIVIDUEL": "Individuel", "ATTAQUE": "Attaque",
+}
+KINDS = {"ranked": "Classé", "private": "Salon privé", "league": "Ligue"}
+SHOT_RESULTS = {"goal": "But", "saved": "Arrêté", "blocked": "Contré", "missed": "À côté"}
+
 RANKS = [
-    (1900, "Challenger", "#C471F5"),
-    (1700, "Diamant",    "#5B9CF6"),
-    (1500, "Platine",    "#72E5D8"),
-    (1300, "Or",         "#FFD700"),
-    (1100, "Argent",     "#C0C0C0"),
-    (900,  "Bronze",     "#CD7F32"),
-    (0,    "Bois",       "#A67C52"),
+    (1900, "Challenger", "#C471F5", "T_Rank_Challenger.png"),
+    (1700, "Diamant",    "#5B9CF6", "T_Rank_Diamant.png"),
+    (1500, "Platine",    "#72E5D8", "T_Rank_Platine.png"),
+    (1300, "Or",         "#FFD700", "T_Rank_Or.png"),
+    (1100, "Argent",     "#C0C0C0", "T_Rank_Argent.png"),
+    (900,  "Bronze",     "#CD7F32", "T_Rank_Bronze.png"),
+    (0,    "Bois",       "#A67C52", "T_Rank_Bois.png"),
 ]
+
+RANK_KEYS = ["challenger", "diamant", "platinet", "or", "argent", "bronze", "bois"]
 
 
 def get_rank(elo):
-    for threshold, name, color in RANKS:
+    for threshold, name, color, badge in RANKS:
         if elo >= threshold:
-            return name, color
-    return RANKS[-1][1], RANKS[-1][2]
+            return name, color, badge
+    return RANKS[-1][1], RANKS[-1][2], RANKS[-1][3]
+
+
+def get_rank_info(elo):
+    """Returns (name, color, badge_filename, rank_key) for template use."""
+    for i, (threshold, name, color, badge) in enumerate(RANKS):
+        if elo >= threshold:
+            return name, color, badge, RANK_KEYS[i]
+    return RANKS[-1][1], RANKS[-1][2], RANKS[-1][3], RANK_KEYS[-1]
 
 
 def team_name(idx):
     if idx is None:
-        return "?", "❓", "#555"
+        return "?", "❓", "#555", None
     t = TEAMS.get(idx)
-    return (t[0], t[1], t[2]) if t else ("Équipe %d" % idx, "❓", "#555")
+    return (t[0], t[1], t[2], t[3]) if t else ("Équipe %d" % idx, "❓", "#555", None)
+
+
+def team_info(idx):
+    """Alias for team_name, used in templates."""
+    return team_name(idx)
+
+
+def footballer_name(animal, number):
+    names = FOOTBALLERS.get(animal)
+    if names is None or number is None or not 0 <= number < len(names):
+        return "?"
+    return names[number]
 
 
 def fmt_date(ts):
-    return datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M")
+    return datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M") if ts else "?"
 
 
 def fmt_ago(ts):
+    if not ts:
+        return "?"
     delta = time.time() - ts
     if delta < 60:
         return "il y a %ds" % int(delta)
@@ -74,92 +129,49 @@ def fmt_ago(ts):
     return "il y a %dj" % int(delta / 86400)
 
 
-# --- requêtes DB ---
-
-def db_connect():
-    db = sqlite3.connect("file:%s?mode=ro" % DB_PATH, uri=True)
-    db.row_factory = sqlite3.Row
-    return db
+def pct(a, b):
+    return round(100.0 * a / b) if b else 0
 
 
-def get_leaderboard(db, limit=100):
-    return db.execute("""
-        SELECT id, name, elo, games, wins, draws, losses, peak, last_seen
-        FROM players WHERE games > 0
-        ORDER BY elo DESC, games DESC, id ASC
-        LIMIT ?""", (limit,)).fetchall()
+# --- base ---
+
+def db():
+    """Une connexion par requête, en lecture seule."""
+    if "db" not in g:
+        g.db = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True,
+                               options="-c default_transaction_read_only=on")
+    return g.db
 
 
-def get_all_players(db):
-    return db.execute("""
-        SELECT id, name, elo, games, wins, draws, losses, peak, last_seen
-        FROM players ORDER BY elo DESC""").fetchall()
+def q_all(sql, params=()):
+    return db().execute(sql, params).fetchall()
 
 
-def get_matches(db, limit=50, offset=0):
-    return db.execute("""
-        SELECT m.id, m.played, m.score_host, m.score_guest, m.forfeit,
-               m.delta_host, m.delta_guest, m.team_host, m.team_guest,
-               ph.id AS host_id, ph.name AS host_name,
-               pg.id AS guest_id, pg.name AS guest_name
-        FROM matches m
-        JOIN players ph ON ph.id = m.host
-        JOIN players pg ON pg.id = m.guest
-        ORDER BY m.played DESC
-        LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
+def q_one(sql, params=()):
+    return db().execute(sql, params).fetchone()
 
 
-def count_matches(db):
-    return db.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+# Un match vu de ses deux côtés, colonnes attendues par les templates (hôte = côté 0)
+MATCH_SELECT = """
+    SELECT m.id, extract(epoch FROM m.played_at)::float8 AS played, m.kind, m.rated, m.outcome,
+           m.outcome = 'forfeit' AS forfeit, m.forfeit_side, m.score_host, m.score_guest, m.has_stats,
+           m.golden_goal, m.duration_s, m.stadium, m.room_code,
+           h.player_id AS host_id, h.name AS host_name, h.animal AS team_host, h.delta AS delta_host, h.scheme AS scheme_host,
+           gu.player_id AS guest_id, gu.name AS guest_name, gu.animal AS team_guest, gu.delta AS delta_guest, gu.scheme AS scheme_guest
+    FROM matches m
+    JOIN match_players h ON h.match_id = m.id AND h.side = 0
+    JOIN match_players gu ON gu.match_id = m.id AND gu.side = 1
+"""
 
 
-def get_player(db, player_id):
-    return db.execute("""
-        SELECT id, name, elo, games, wins, draws, losses, peak, created, last_seen
-        FROM players WHERE id = ?""", (player_id,)).fetchone()
-
-
-def get_player_by_name(db, name):
-    return db.execute("""
-        SELECT id FROM players WHERE name = ? COLLATE NOCASE""", (name,)).fetchone()
-
-
-def get_player_matches(db, player_id, limit=20):
-    return db.execute("""
-        SELECT m.id, m.played, m.score_host, m.score_guest, m.forfeit,
-               m.delta_host, m.delta_guest, m.team_host, m.team_guest,
-               ph.id AS host_id, ph.name AS host_name,
-               pg.id AS guest_id, pg.name AS guest_name
-        FROM matches m
-        JOIN players ph ON ph.id = m.host
-        JOIN players pg ON pg.id = m.guest
-        WHERE m.host = ? OR m.guest = ?
-        ORDER BY m.played DESC
-        LIMIT ?""", (player_id, player_id, limit)).fetchall()
-
-
-def get_player_rank(db, player_id, elo):
-    row = db.execute("""
-        SELECT COUNT(*) FROM players
-        WHERE games > 0 AND elo > ?""", (elo,)).fetchone()
-    return row[0] + 1
-
-
-def player_elo_history(matches, player_id, current_elo):
-    """Reconstruit l'historique Elo d'un joueur à partir de ses matchs (tri chrono)."""
-    rows = sorted(matches, key=lambda r: r["played"])
-    deltas = []
-    for m in rows:
-        d = m["delta_host"] if m["host_id"] == player_id else m["delta_guest"]
-        deltas.append(d)
-    # on remonte de l'Elo actuel en soustrayant les deltas (du plus récent au plus ancien)
-    elo = current_elo
-    history = [elo]
-    for d in reversed(deltas):
-        elo -= d
-        history.append(elo)
-    history.reverse()
-    return history
+def server_status():
+    try:
+        row = q_one("SELECT online, queued, live_matches, extract(epoch FROM updated)::float8 AS updated FROM server_status")
+    except psycopg.Error:
+        return None
+    if row is None or time.time() - row["updated"] > 60:
+        return None  # serveur de jeu arrêté
+    return row
 
 
 def elo_sparkline_points(history):
@@ -175,24 +187,8 @@ def elo_sparkline_points(history):
         y = 76 - ((v - mn) / span * 72)
         pts.append("%.1f,%.1f" % (x, y))
     poly = " ".join(pts)
-    last_x = 398
-    polygon = poly + " %.1f,80 1,80" % last_x
+    polygon = poly + " %.1f,80 1,80" % 398
     return poly, polygon
-
-
-def player_team_stats(matches, player_id):
-    counts = {}
-    for m in matches:
-        if m["host_id"] == player_id:
-            t = m["team_host"]
-        else:
-            t = m["team_guest"]
-        if t is not None:
-            counts[t] = counts.get(t, 0) + 1
-    if not counts:
-        return []
-    total = sum(counts.values())
-    return sorted([(t, n, round(100 * n / total)) for t, n in counts.items()], key=lambda x: -x[1])[:5]
 
 
 # --- Flask app ---
@@ -200,431 +196,203 @@ def player_team_stats(matches, player_id):
 app = Flask(__name__)
 
 
-BASE_CSS = """
-:root {
-  --bg: #0f1119;
-  --card: #1a1f2e;
-  --card2: #242938;
-  --border: #2d3348;
-  --accent: #5b6bf8;
-  --accent2: #7c8ff8;
-  --text: #c8ccd8;
-  --text2: #858ca8;
-  --win: #3dba78;
-  --loss: #e74c5a;
-  --draw: #f5a623;
-  --gold: #FFD700;
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-a { color: var(--accent2); text-decoration: none; }
-a:hover { color: white; text-decoration: underline; }
-
-.nav { background: var(--card); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; position: sticky; top: 0; z-index: 100; }
-.nav-logo { font-size: 18px; font-weight: 700; color: white; letter-spacing: .5px; }
-.nav-logo span { color: var(--accent); }
-.nav a { color: var(--text2); font-weight: 500; padding: 6px 0; border-bottom: 2px solid transparent; }
-.nav a:hover, .nav a.active { color: white; border-bottom-color: var(--accent); text-decoration: none; }
-
-.container { max-width: 1100px; margin: 0 auto; padding: 28px 16px; }
-
-h1 { font-size: 22px; font-weight: 700; color: white; margin-bottom: 20px; }
-h2 { font-size: 16px; font-weight: 600; color: white; margin-bottom: 14px; }
-
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
-
-table { width: 100%; border-collapse: collapse; }
-th { text-align: left; padding: 10px 12px; color: var(--text2); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
-td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-tr:last-child td { border-bottom: none; }
-tr:hover td { background: rgba(255,255,255,.025); }
-
-.rank-num { color: var(--text2); font-weight: 600; font-size: 13px; width: 36px; }
-.rank-num.top1 { color: var(--gold); }
-.rank-num.top2 { color: #C0C0C0; }
-.rank-num.top3 { color: #CD7F32; }
-
-.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
-.elo-val { font-size: 15px; font-weight: 700; color: white; }
-.wl { display: flex; gap: 6px; align-items: center; }
-.wl-bar { height: 6px; border-radius: 3px; }
-.w { color: var(--win); }
-.l { color: var(--loss); }
-.d { color: var(--draw); }
-.score { font-size: 18px; font-weight: 800; color: white; }
-.score-sep { color: var(--text2); margin: 0 2px; }
-.delta-pos { color: var(--win); font-weight: 700; }
-.delta-neg { color: var(--loss); font-weight: 700; }
-.delta-zero { color: var(--text2); }
-.forfeit-tag { background: #3a1a1a; color: var(--loss); border-radius: 4px; padding: 1px 5px; font-size: 10px; font-weight: 700; }
-.team-tag { font-size: 12px; color: var(--text2); display: inline-flex; align-items: center; gap: 4px; }
-.date-cell { color: var(--text2); font-size: 12px; white-space: nowrap; }
-.player-link { font-weight: 600; color: white; }
-.player-link:hover { color: var(--accent2); }
-
-.profile-header { display: flex; gap: 20px; align-items: flex-start; }
-.profile-avatar { width: 72px; height: 72px; border-radius: 50%; background: var(--card2); display: flex; align-items: center; justify-content: center; font-size: 36px; flex-shrink: 0; }
-.profile-name { font-size: 24px; font-weight: 800; color: white; }
-.profile-meta { color: var(--text2); font-size: 13px; margin-top: 4px; }
-.profile-rank-badge { margin-top: 8px; }
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; }
-.stat-box { background: var(--card2); border-radius: 8px; padding: 12px 14px; }
-.stat-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .4px; }
-.stat-val { font-size: 20px; font-weight: 800; color: white; margin-top: 2px; }
-.stat-val.win-color { color: var(--win); }
-.stat-val.loss-color { color: var(--loss); }
-
-.elo-chart-wrap { position: relative; height: 80px; margin: 10px 0; }
-.elo-chart-wrap svg { width: 100%; height: 100%; overflow: visible; }
-
-.match-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
-.match-row:last-child { border-bottom: none; }
-.match-result-tag { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; flex-shrink: 0; }
-.result-W { background: rgba(61,186,120,.2); color: var(--win); }
-.result-L { background: rgba(231,76,90,.2); color: var(--loss); }
-.result-D { background: rgba(245,166,35,.2); color: var(--draw); }
-.match-score { font-size: 16px; font-weight: 800; color: white; min-width: 36px; text-align: center; }
-.match-opp { font-size: 13px; font-weight: 600; }
-.match-elo-delta { font-size: 13px; font-weight: 700; margin-left: auto; }
-.match-date { font-size: 11px; color: var(--text2); }
-
-.pagination { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
-.pagination a, .pagination span { padding: 6px 14px; border-radius: 6px; background: var(--card2); border: 1px solid var(--border); font-size: 13px; }
-.pagination a:hover { background: var(--border); color: white; text-decoration: none; }
-.pagination .current { background: var(--accent); color: white; border-color: var(--accent); }
-
-.search-bar { display: flex; gap: 10px; margin-bottom: 20px; }
-.search-bar input { flex: 1; background: var(--card2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; color: var(--text); font-size: 14px; }
-.search-bar input:focus { outline: none; border-color: var(--accent); }
-.search-bar button { background: var(--accent); color: white; border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; cursor: pointer; }
-
-.empty { color: var(--text2); text-align: center; padding: 40px; font-size: 15px; }
-"""
-
-NAV_TEMPLATE = """<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Pet Soccer Stats{% endblock %}</title>
-<style>{{ css }}</style>
-</head>
-<body>
-<nav class="nav">
-  <span class="nav-logo">Pet <span>Soccer</span> Stats</span>
-  <a href="{{ url_for('index') }}" class="{{ 'active' if page=='home' }}">Classement</a>
-  <a href="{{ url_for('matches') }}" class="{{ 'active' if page=='matches' }}">Matchs</a>
-</nav>
-<div class="container">
-{% block content %}{% endblock %}
-</div>
-</body>
-</html>"""
-
-INDEX_TEMPLATE = NAV_TEMPLATE.replace("{% block content %}{% endblock %}", """
-{% block content %}
-<h1>Classement</h1>
-<div class="card" style="padding:0">
-<table>
-<thead><tr>
-  <th>#</th><th>Joueur</th><th>Rang</th><th>Elo</th>
-  <th>Parties</th><th>V / N / D</th><th>% Win</th><th>Pic</th><th>Vu</th>
-</tr></thead>
-<tbody>
-{% for p in players %}
-{% set rname, rcolor = get_rank(p['elo']) %}
-{% set wr = (p['wins'] * 100 // p['games']) if p['games'] else 0 %}
-<tr>
-  <td class="rank-num {{ 'top1' if loop.index==1 else ('top2' if loop.index==2 else ('top3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
-  <td><a class="player-link" href="{{ url_for('player', player_id=p['id']) }}">{{ p['name'] }}</a></td>
-  <td><span class="badge" style="background:{{ rcolor }}22;color:{{ rcolor }}">{{ rname }}</span></td>
-  <td><span class="elo-val">{{ p['elo'] }}</span></td>
-  <td style="color:var(--text2)">{{ p['games'] }}</td>
-  <td>
-    <span class="w">{{ p['wins'] }}V</span>
-    <span style="color:var(--text2)"> / </span>
-    <span class="d">{{ p['draws'] }}N</span>
-    <span style="color:var(--text2)"> / </span>
-    <span class="l">{{ p['losses'] }}D</span>
-  </td>
-  <td>
-    <span style="color:{{ 'var(--win)' if wr>=55 else ('var(--loss)' if wr<45 else 'var(--draw)') }}; font-weight:600">{{ wr }}%</span>
-  </td>
-  <td style="color:var(--text2)">{{ p['peak'] }}</td>
-  <td class="date-cell">{{ fmt_ago(p['last_seen']) }}</td>
-</tr>
-{% else %}
-<tr><td colspan="9" class="empty">Aucun joueur classé pour le moment.</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% endblock %}""")
-
-MATCHES_TEMPLATE = NAV_TEMPLATE.replace("{% block content %}{% endblock %}", """
-{% block content %}
-<h1>Historique des matchs <small style="font-size:14px;color:var(--text2)">({{ total }} au total)</small></h1>
-<div class="card" style="padding:0">
-<table>
-<thead><tr>
-  <th>Date</th>
-  <th>Hôte</th><th>Équipe hôte</th>
-  <th style="text-align:center">Score</th>
-  <th>Équipe invité</th><th>Invité</th>
-  <th>Elo Δ</th><th></th>
-</tr></thead>
-<tbody>
-{% for m in matches %}
-{% set hn, he, hc = team_name(m['team_host']) %}
-{% set gn, ge, gc = team_name(m['team_guest']) %}
-<tr>
-  <td class="date-cell">{{ fmt_date(m['played']) }}</td>
-  <td><a class="player-link" href="{{ url_for('player', player_id=m['host_id']) }}">{{ m['host_name'] }}</a></td>
-  <td><span class="team-tag" title="{{ hn }}"><span style="color:{{ hc }}">{{ he }}</span> {{ hn }}</span></td>
-  <td style="text-align:center">
-    <span class="score">{{ m['score_host'] }}<span class="score-sep">–</span>{{ m['score_guest'] }}</span>
-  </td>
-  <td><span class="team-tag" title="{{ gn }}"><span style="color:{{ gc }}">{{ ge }}</span> {{ gn }}</span></td>
-  <td><a class="player-link" href="{{ url_for('player', player_id=m['guest_id']) }}">{{ m['guest_name'] }}</a></td>
-  <td>
-    <span class="{{ 'delta-pos' if m['delta_host']>0 else ('delta-neg' if m['delta_host']<0 else 'delta-zero') }}">
-      {{ '+' if m['delta_host']>0 else '' }}{{ m['delta_host'] }}
-    </span>
-    <span style="color:var(--text2)"> / </span>
-    <span class="{{ 'delta-pos' if m['delta_guest']>0 else ('delta-neg' if m['delta_guest']<0 else 'delta-zero') }}">
-      {{ '+' if m['delta_guest']>0 else '' }}{{ m['delta_guest'] }}
-    </span>
-  </td>
-  <td>{% if m['forfeit'] %}<span class="forfeit-tag">FF</span>{% endif %}</td>
-</tr>
-{% else %}
-<tr><td colspan="8" class="empty">Aucun match enregistré.</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-
-<div class="pagination">
-{% if cur_page > 1 %}<a href="{{ url_for('matches', p=cur_page-1) }}">‹ Préc.</a>{% endif %}
-{% for i in range(1, pages+1) %}
-  {% if i == cur_page %}<span class="current">{{ i }}</span>
-  {% elif i <= 2 or i >= pages-1 or (i >= cur_page-2 and i <= cur_page+2) %}
-    <a href="{{ url_for('matches', p=i) }}">{{ i }}</a>
-  {% elif i == 3 or i == pages-2 %}<span>…</span>{% endif %}
-{% endfor %}
-{% if cur_page < pages %}<a href="{{ url_for('matches', p=cur_page+1) }}">Suiv. ›</a>{% endif %}
-</div>
-{% endblock %}""")
-
-PLAYER_TEMPLATE = NAV_TEMPLATE.replace("{% block content %}{% endblock %}", """
-{% block content %}
-{% set rname, rcolor = get_rank(p['elo']) %}
-{% set wr = (p['wins'] * 100 // p['games']) if p['games'] else 0 %}
-
-<div class="card">
-  <div class="profile-header">
-    <div class="profile-avatar">{{ animal }}</div>
-    <div>
-      <div class="profile-name">{{ p['name'] }}</div>
-      <div class="profile-meta">
-        Inscrit le {{ fmt_date(p['created']) }} · Vu {{ fmt_ago(p['last_seen']) }}
-        · Rang <strong style="color:white">#{{ rank_pos }}</strong> sur {{ total_players }}
-      </div>
-      <div class="profile-rank-badge">
-        <span class="badge" style="background:{{ rcolor }}22;color:{{ rcolor }};font-size:13px;padding:4px 12px">
-          {{ rname }} · {{ p['elo'] }} Elo
-        </span>
-        {% if p['peak'] > p['elo'] %}
-        <span style="color:var(--text2);font-size:12px;margin-left:8px">Pic : {{ p['peak'] }}</span>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <h2>Statistiques</h2>
-  <div class="stats-grid">
-    <div class="stat-box"><div class="stat-label">Parties</div><div class="stat-val">{{ p['games'] }}</div></div>
-    <div class="stat-box"><div class="stat-label">Victoires</div><div class="stat-val win-color">{{ p['wins'] }}</div></div>
-    <div class="stat-box"><div class="stat-label">Nuls</div><div class="stat-val" style="color:var(--draw)">{{ p['draws'] }}</div></div>
-    <div class="stat-box"><div class="stat-label">Défaites</div><div class="stat-val loss-color">{{ p['losses'] }}</div></div>
-    <div class="stat-box"><div class="stat-label">% Victoires</div>
-      <div class="stat-val" style="color:{{ 'var(--win)' if wr>=55 else ('var(--loss)' if wr<45 else 'var(--draw)') }}">{{ wr }}%</div>
-    </div>
-    <div class="stat-box"><div class="stat-label">Elo actuel</div><div class="stat-val" style="color:{{ rcolor }}">{{ p['elo'] }}</div></div>
-    <div class="stat-box"><div class="stat-label">Pic Elo</div><div class="stat-val" style="color:var(--gold)">{{ p['peak'] }}</div></div>
-  </div>
-
-  {% if spark_line %}
-  <div style="margin-top:16px">
-    <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Courbe Elo</div>
-    <div class="elo-chart-wrap">
-      <svg viewBox="0 0 400 80" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="eloGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="{{ rcolor }}" stop-opacity="0.3"/>
-            <stop offset="100%" stop-color="{{ rcolor }}" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <polygon points="{{ spark_poly }}" fill="url(#eloGrad)"/>
-        <polyline points="{{ spark_line }}" fill="none" stroke="{{ rcolor }}" stroke-width="2"/>
-      </svg>
-    </div>
-  </div>
-  {% endif %}
-</div>
-
-{% if team_stats %}
-<div class="card">
-  <h2>Équipes favorites</h2>
-  <div style="display:flex;flex-wrap:wrap;gap:10px">
-  {% for tidx, count, pct in team_stats %}
-    {% set tn, te, tc = team_name(tidx) %}
-    <div style="background:var(--card2);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:8px">
-      <span style="font-size:22px">{{ te }}</span>
-      <div>
-        <div style="font-weight:600;color:white;font-size:13px">{{ tn }}</div>
-        <div style="color:var(--text2);font-size:12px">{{ count }} match{{ 's' if count>1 }} · {{ pct }}%</div>
-      </div>
-    </div>
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-<div class="card">
-  <h2>Derniers matchs</h2>
-  {% if not matches %}
-  <div class="empty">Aucun match.</div>
-  {% endif %}
-  {% for m in matches %}
-    {% set is_host = m['host_id'] == p['id'] %}
-    {% set my_score = m['score_host'] if is_host else m['score_guest'] %}
-    {% set op_score = m['score_guest'] if is_host else m['score_host'] %}
-    {% set my_delta = m['delta_host'] if is_host else m['delta_guest'] %}
-    {% set opp_id = m['guest_id'] if is_host else m['host_id'] %}
-    {% set opp_name = m['guest_name'] if is_host else m['host_name'] %}
-    {% set my_team = m['team_host'] if is_host else m['team_guest'] %}
-    {% set op_team = m['team_guest'] if is_host else m['team_host'] %}
-    {% set result = 'W' if my_score > op_score else ('L' if my_score < op_score else 'D') %}
-    {% set tn_my, te_my, tc_my = team_name(my_team) %}
-    {% set tn_op, te_op, tc_op = team_name(op_team) %}
-    <div class="match-row">
-      <div class="match-result-tag result-{{ result }}">{{ result }}</div>
-      <div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span class="team-tag" title="{{ tn_my }}" style="color:{{ tc_my }}">{{ te_my }}</span>
-          <span class="match-score">{{ my_score }}–{{ op_score }}</span>
-          <span class="team-tag" title="{{ tn_op }}" style="color:{{ tc_op }}">{{ te_op }}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:3px">
-          <span class="match-date">{{ fmt_ago(m['played']) }}</span>
-          <span style="color:var(--text2);font-size:12px">vs
-            <a href="{{ url_for('player', player_id=opp_id) }}" style="color:var(--text2)">{{ opp_name }}</a>
-          </span>
-          {% if m['forfeit'] %}<span class="forfeit-tag">FF</span>{% endif %}
-        </div>
-      </div>
-      <div class="match-elo-delta">
-        <span class="{{ 'delta-pos' if my_delta>0 else ('delta-neg' if my_delta<0 else 'delta-zero') }}">
-          {{ '+' if my_delta>0 else '' }}{{ my_delta }}
-        </span>
-      </div>
-    </div>
-  {% endfor %}
-</div>
-{% endblock %}""")
+@app.teardown_appcontext
+def close_db(exc):
+    conn = g.pop("db", None)
+    if conn is not None:
+        conn.close()
 
 
-ANIMALS_FOR_PROFILE = ["🐻", "🐂", "🐓", "🦕", "🐸", "🦒", "🦍", "🦁", "🐆", "🦈", "🐢", "🤖", "🐼", "🐯"]
-
-
-def pick_avatar(player_id):
-    return ANIMALS_FOR_PROFILE[player_id % len(ANIMALS_FOR_PROFILE)]
-
-
-def render(template, **ctx):
-    ctx.setdefault("css", BASE_CSS)
-    ctx.setdefault("get_rank", get_rank)
-    ctx.setdefault("team_name", team_name)
-    ctx.setdefault("fmt_date", fmt_date)
-    ctx.setdefault("fmt_ago", fmt_ago)
-    ctx["enumerate"] = enumerate
-    return render_template_string(template, **ctx)
+@app.context_processor
+def utility_processor():
+    return dict(
+        get_rank=get_rank, get_rank_info=get_rank_info, team_name=team_name, team_info=team_info,
+        footballer_name=footballer_name, fmt_date=fmt_date, fmt_ago=fmt_ago, enumerate=enumerate, pct=pct,
+        RANK_KEYS=RANK_KEYS, ROLES=ROLES, SCHEMES=SCHEMES, KINDS=KINDS, SHOT_RESULTS=SHOT_RESULTS,
+        status=server_status(),
+    )
 
 
 @app.route("/")
 def index():
-    db = db_connect()
-    players = get_leaderboard(db, 200)
-    db.close()
-    return render(INDEX_TEMPLATE, page="home", players=players)
+    query = request.args.get("q", "").strip()
+    sql = """
+        SELECT p.id, p.name, p.elo, p.games, p.wins, p.draws, p.losses, p.peak,
+               extract(epoch FROM p.last_seen)::float8 AS last_seen,
+               (SELECT mp.animal FROM match_players mp WHERE mp.player_id = p.id AND mp.animal IS NOT NULL
+                GROUP BY mp.animal ORDER BY count(*) DESC LIMIT 1) AS team
+        FROM players p WHERE p.games > 0 {filter}
+        ORDER BY p.elo DESC, p.games DESC, p.id LIMIT 200"""
+    if query:
+        rows = q_all(sql.format(filter="AND p.name ILIKE %s"), ("%" + query + "%",))
+    else:
+        rows = q_all(sql.format(filter=""))
+    total_players = q_one("SELECT COUNT(*) AS n FROM players WHERE games > 0")["n"]
+
+    players = []
+    for i, p in enumerate(rows):
+        rname, rcolor, rbadge, rkey = get_rank_info(p["elo"])
+        tn, te, tc, tl = team_name(p["team"])
+        players.append(dict(p, rank=i + 1, total=p["games"], rank_name=rname, rank_color=rcolor, rank_badge=rbadge,
+                            rank_key=rkey, team=tn if p["team"] is not None else "", team_emoji=te, team_color=tc,
+                            team_logo=tl))
+    if query and len(players) == 1:
+        return redirect(url_for("player", player_id=players[0]["id"]))
+    return render_template("index.html", players=players, total_players=total_players, query=query)
 
 
 @app.route("/matches")
 def matches():
     page = max(1, request.args.get("p", 1, type=int))
+    kind = request.args.get("kind")
+    if kind not in KINDS:
+        kind = None
     per_page = 30
-    db = db_connect()
-    total = count_matches(db)
+    where = "WHERE m.kind = %s" if kind else ""
+    params = (kind,) if kind else ()
+    total = q_one("SELECT COUNT(*) AS n FROM matches m " + where, params)["n"]
     pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, pages)
-    rows = get_matches(db, per_page, (page - 1) * per_page)
-    db.close()
-    return render(MATCHES_TEMPLATE, page="matches",
-                  matches=rows, total=total, cur_page=page, pages=pages)
+    rows = q_all(MATCH_SELECT + where + " ORDER BY m.played_at DESC LIMIT %s OFFSET %s",
+                 params + (per_page, (page - 1) * per_page))
+    return render_template("matches.html", matches=rows, total=total, cur_page=page, pages=pages, kind=kind)
+
+
+@app.route("/match/<int:match_id>")
+def match(match_id):
+    m = q_one(MATCH_SELECT + " WHERE m.id = %s", (match_id,))
+    if m is None:
+        abort(404)
+    sides = q_all("SELECT * FROM match_players WHERE match_id = %s ORDER BY side", (match_id,))
+    footballers = q_all("SELECT * FROM match_footballers WHERE match_id = %s ORDER BY side, number", (match_id,))
+    events = q_all("SELECT * FROM match_events WHERE match_id = %s ORDER BY minute, seq", (match_id,))
+    teams = []
+    for s in sides:
+        team = dict(s, footballers=[f for f in footballers if f["side"] == s["side"]],
+                    shots_list=[e for e in events if e["side"] == s["side"] and e["kind"] == "shot"])
+        # placement prévu (carte tactique) par place, pour comparer à la position moyenne réelle
+        layout = (s["layouts"] or {}).get("play") if s["layouts"] else None
+        for f in team["footballers"]:
+            f["planned"] = layout[f["slot"]] if layout and f["slot"] is not None and 0 <= f["slot"] < len(layout) else None
+            f["display_name"] = footballer_name(s["animal"], f["number"])
+        heat = s["heatmap"]
+        if heat and s["heat_depth"]:
+            team["heat_grid"] = [heat[d * s["heat_lateral"]:(d + 1) * s["heat_lateral"]] for d in range(s["heat_depth"])]
+        ball = s["ball_heatmap"]
+        if ball and s["heat_depth"]:
+            team["ball_grid"] = [ball[d * s["heat_lateral"]:(d + 1) * s["heat_lateral"]] for d in range(s["heat_depth"])]
+        teams.append(team)
+    timeline = []
+    for e in events:
+        if e["kind"] == "shot":
+            continue
+        side_animal = sides[e["side"]]["animal"] if e["side"] < len(sides) else None
+        if e["kind"] == "own_goal":
+            # le joueur qui marque contre son camp est de l'autre équipe
+            other = sides[1 - e["side"]]["animal"] if len(sides) == 2 else None
+            who = footballer_name(other, e["number"])
+        else:
+            who = footballer_name(side_animal, e["number"]) if e["number"] is not None else None
+        timeline.append(dict(e, who=who))
+    return render_template("match.html", m=m, teams=teams, timeline=timeline)
 
 
 @app.route("/player/<int:player_id>")
 def player(player_id):
-    db = db_connect()
-    p = get_player(db, player_id)
+    p = q_one("""SELECT id, name, elo, games, wins, draws, losses, peak,
+                        extract(epoch FROM created)::float8 AS created, extract(epoch FROM last_seen)::float8 AS last_seen
+                 FROM players WHERE id = %s""", (player_id,))
     if p is None:
-        db.close()
         abort(404)
-    matches = get_player_matches(db, player_id, 20)
-    rank_pos = get_player_rank(db, player_id, p["elo"])
-    total_players = db.execute("SELECT COUNT(*) FROM players WHERE games > 0").fetchone()[0]
-    db.close()
+    matches = q_all(MATCH_SELECT + " WHERE h.player_id = %s OR gu.player_id = %s ORDER BY m.played_at DESC LIMIT 20",
+                    (player_id, player_id))
+    rank_pos = 1 + q_one("SELECT COUNT(*) AS n FROM players WHERE games > 0 AND elo > %s", (p["elo"],))["n"]
+    total_players = q_one("SELECT COUNT(*) AS n FROM players WHERE games > 0")["n"]
 
-    history = player_elo_history(matches, player_id, p["elo"])
+    rated = q_all("""SELECT mp.elo_before, mp.elo_after FROM match_players mp JOIN matches m ON m.id = mp.match_id
+                     WHERE mp.player_id = %s AND m.rated ORDER BY m.played_at DESC LIMIT 50""", (player_id,))
+    rated.reverse()
+    history = ([rated[0]["elo_before"]] + [r["elo_after"] for r in rated]) if rated else []
     spark_line, spark_poly = elo_sparkline_points(history)
-    team_stats = player_team_stats(matches, player_id)
-    avatar = pick_avatar(player_id)
 
-    return render(PLAYER_TEMPLATE, page="player",
-                  p=p, matches=matches, rank_pos=rank_pos, total_players=total_players,
-                  elo_history=history, spark_line=spark_line, spark_poly=spark_poly,
-                  team_stats=team_stats, animal=avatar)
+    # équipes jouées, avec leur bilan
+    team_rows = q_all("""SELECT animal, COUNT(*) AS n, SUM((result = 'W')::int) AS w FROM match_players
+                         WHERE player_id = %s AND animal IS NOT NULL GROUP BY animal ORDER BY n DESC LIMIT 5""", (player_id,))
+    total_team = sum(r["n"] for r in team_rows) or 1
+    team_stats = [(r["animal"], r["n"], round(100 * r["n"] / total_team), pct(r["w"], r["n"])) for r in team_rows]
+    schemes = q_all("""SELECT scheme, COUNT(*) AS n, SUM((result = 'W')::int) AS w FROM match_players
+                       WHERE player_id = %s AND scheme IS NOT NULL GROUP BY scheme ORDER BY n DESC LIMIT 6""", (player_id,))
+    averages = q_one("""SELECT COUNT(*) AS n, AVG(shots) AS shots, AVG(possession) AS possession,
+                               SUM(passes_ok) AS passes_ok, SUM(passes) AS passes, AVG(recoveries) AS recoveries,
+                               AVG(saves) AS saves, AVG(goals) AS goals, MAX(goals) AS max_goals
+                        FROM match_players WHERE player_id = %s AND shots IS NOT NULL""", (player_id,))
+    form = [r["result"] for r in q_all("""SELECT mp.result FROM match_players mp JOIN matches m ON m.id = mp.match_id
+                                          WHERE mp.player_id = %s ORDER BY m.played_at DESC LIMIT 10""", (player_id,))]
+    animal = TEAMS[team_rows[0]["animal"]][1] if team_rows and team_rows[0]["animal"] in TEAMS else "⚽"
+    return render_template("player.html", p=p, matches=matches, rank_pos=rank_pos, total_players=total_players,
+                           elo_history=history, spark_line=spark_line, spark_poly=spark_poly, team_stats=team_stats,
+                           schemes=schemes, averages=averages, form=form, animal=animal)
 
 
 @app.route("/player/<name>")
 def player_by_name(name):
-    db = db_connect()
-    row = get_player_by_name(db, name)
-    db.close()
+    row = q_one("SELECT id FROM players WHERE name = %s ORDER BY games DESC LIMIT 1", (name,)) or \
+        q_one("SELECT id FROM players WHERE lower(name) = lower(%s) ORDER BY games DESC LIMIT 1", (name,))
     if row is None:
         abort(404)
     return redirect(url_for("player", player_id=row["id"]))
 
 
+@app.route("/meta")
+def meta():
+    """Taux de choix et de victoire des équipes, des schémas et des rôles ; équipe contre équipe."""
+    kind = request.args.get("kind")
+    if kind not in KINDS:
+        kind = None
+    where = "WHERE m.kind = %s" if kind else ""
+    params = (kind,) if kind else ()
+    total = q_one("SELECT COUNT(*) AS n FROM matches m " + where, params)["n"]
+    base = "FROM match_players mp JOIN matches m ON m.id = mp.match_id " + where
+    teams = q_all("""SELECT mp.animal, COUNT(*) AS n, SUM((mp.result = 'W')::int) AS w, SUM((mp.result = 'D')::int) AS d,
+                            AVG(mp.goals) AS goals, AVG(mp.possession) AS possession """ + base +
+                  (" AND" if where else " WHERE") + " mp.animal IS NOT NULL GROUP BY mp.animal ORDER BY n DESC", params)
+    schemes = q_all("""SELECT mp.scheme, COUNT(*) AS n, SUM((mp.result = 'W')::int) AS w """ + base +
+                    (" AND" if where else " WHERE") + " mp.scheme IS NOT NULL GROUP BY mp.scheme ORDER BY n DESC", params)
+    roles = q_all("""SELECT r.role, COUNT(*) AS n, SUM((mp.result = 'W')::int) AS w
+                     FROM match_players mp JOIN matches m ON m.id = mp.match_id, unnest(mp.roles) AS r(role) """ + where +
+                  " GROUP BY r.role ORDER BY n DESC", params)
+    matchups = q_all("""SELECT a.animal AS a, b.animal AS b, COUNT(*) AS n, SUM((a.result = 'W')::int) AS w
+                        FROM match_players a JOIN match_players b ON b.match_id = a.match_id AND b.side <> a.side
+                        JOIN matches m ON m.id = a.match_id """ + where +
+                     (" AND" if where else " WHERE") + " a.animal IS NOT NULL AND b.animal IS NOT NULL GROUP BY a.animal, b.animal",
+                     params)
+    scorers = q_all("""SELECT mp.animal, f.number, SUM(f.goals) AS goals, SUM(f.shots) AS shots, COUNT(*) AS n
+                       FROM match_footballers f JOIN match_players mp ON mp.match_id = f.match_id AND mp.side = f.side
+                       JOIN matches m ON m.id = f.match_id """ + where +
+                    " GROUP BY mp.animal, f.number HAVING SUM(f.goals) > 0 ORDER BY goals DESC LIMIT 10", params)
+    grid = {(r["a"], r["b"]): r for r in matchups}
+    animals = sorted({r["animal"] for r in teams})
+    return render_template("meta.html", total=total, teams=teams, schemes=schemes, roles=roles, grid=grid,
+                           animals=animals, scorers=scorers, kind=kind)
+
+
 @app.errorhandler(404)
 def not_found(e):
-    return render(NAV_TEMPLATE.replace("{% block content %}{% endblock %}",
-        "{% block content %}<div class='empty' style='margin-top:60px'>Joueur introuvable.</div>{% endblock %}"),
-        page=""), 404
+    return render_template("base.html",
+                           content="<div class='empty' style='margin-top:60px'>Introuvable.</div>"), 404
 
 
 def main():
-    global DB_PATH
+    global DATABASE_URL
     ap = argparse.ArgumentParser(description="Serveur web de stats Pet Soccer.")
-    ap.add_argument("--db", default=DB_PATH, help="chemin vers players.db")
+    ap.add_argument("--db", default=DATABASE_URL, help="base Postgres (par défaut : la variable DATABASE_URL)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
-    DB_PATH = args.db
+    if not args.db:
+        ap.error("donner la base : --db postgresql://... ou la variable DATABASE_URL")
+    DATABASE_URL = args.db
     print("Pet Soccer Stats sur http://localhost:%d" % args.port)
     app.run(host=args.host, port=args.port, debug=args.verbose)
 

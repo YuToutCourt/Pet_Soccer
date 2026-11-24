@@ -51,6 +51,18 @@ class ModStats {
    static final int _CUP_WON = 22; // finale de coupe gagnée : numéro de la coupe + 1, 0 sinon
    static final int _SURVIVAL_WAVE = 23; // survie : numéro de la manche jouée (1 = première), 0 hors survie
    static final int _FIELDS = 24;
+   // [mod] en ligne : statistiques détaillées que le jeu de l'hôte envoie au serveur (PutMatchStats, PKT_MATCH_STATS)
+   static final int _HEAT_D = 12; // cases de la heatmap en profondeur (0 = son but)
+   static final int _HEAT_L = 8; // ... et en latéral (0 = haut de l'écran), repère de l'écran Tactique
+   static final float _SAMPLE_STEP = 0.25F; // secondes de match entre deux relevés des positions
+   static final float _MAX_STEP = 0.06F; // déplacement entre deux relevés au-delà duquel c'est un replacement (pas compté)
+   static final int _MAX_GOALS = 30;
+   static final int _MAX_SHOTS = 30; // par équipe, dans le paquet
+   static final int _MAX_SUPERS = 20;
+   static final int _SHOT_MISSED = 0; // issues d'un tir (protocol.SHOT_*)
+   static final int _SHOT_GOAL = 1;
+   static final int _SHOT_SAVED = 2;
+   static final int _SHOT_BLOCKED = 3;
 
    // compteurs d'une équipe pendant le match. Clé : l'objet Team, car les index d'équipe s'inversent à la mi-temps.
    static class TeamStats {
@@ -61,6 +73,36 @@ class ModStats {
       int m_nMaxDeficit = 0;
       int m_nSuperTypes = 0;
       java.util.Vector m_vGoals = new java.util.Vector(); // dans l'ordre du match
+      // [mod] en ligne (PKT_MATCH_STATS) : heatmaps (profondeur x latéral), tirs et supers dans l'ordre du match
+      int[] m_tHeat = new int[_HEAT_D * _HEAT_L];
+      int[] m_tBallHeat = new int[_HEAT_D * _HEAT_L]; // le ballon quand l'équipe l'a
+      java.util.Vector m_vShots = new java.util.Vector();
+      java.util.Vector m_vSupers = new java.util.Vector(); // int[]{minute, type}
+   }
+
+   // [mod] en ligne : ce que fait chaque joueur (PKT_MATCH_STATS)
+   static class PlayerStats {
+      int m_nGoals = 0;
+      int m_nShots = 0;
+      int m_nPasses = 0;
+      int m_nPassesOk = 0;
+      int m_nRecoveries = 0;
+      float m_fDistance = 0.0F; // en fractions de la longueur du terrain
+      float m_fSumDepth = 0.0F;
+      float m_fSumLateral = 0.0F;
+      int m_nSamples = 0;
+      boolean m_bHasLast = false;
+      float m_fLastX = 0.0F;
+      float m_fLastZ = 0.0F;
+   }
+
+   static class Shot {
+      Team m_cTeam;
+      int m_nMinute;
+      int m_nNumber; // GetListIndex du tireur
+      float m_fDepth; // position du tireur, repère de son équipe
+      float m_fLateral;
+      int m_nResult = _SHOT_MISSED;
    }
 
    static class Goal {
@@ -84,12 +126,22 @@ class ModStats {
    private static float m_fLastSaveTime = -100.0F;
    private static boolean m_bLoaded = false;
    private static Hashtable m_tHistory = new Hashtable(); // profil -> java.util.Vector de Record (du plus ancien au plus récent)
+   private static Hashtable m_tPlayerStats = new Hashtable(); // AIFootBaller -> PlayerStats
+   private static Shot m_cOpenShot = null; // dernier tir, issue pas encore connue
+   private static Shot m_cSavedShot = null; // tir du dernier arrêt : redevient un but si l'arrêt est annulé
+   private static float m_fLastSample = -1.0F;
+   private static boolean m_bSampleGap = true; // jeu arrêté depuis le dernier relevé : la distance repart de là
 
    // ---------------------------------------------------------------- pendant le match
 
    // appelé par AIMatch.ResetStatistics (début ou reprise d'un match)
    static void Reset() {
       m_tTeams.clear();
+      m_tPlayerStats.clear();
+      m_cOpenShot = null;
+      m_cSavedShot = null;
+      m_fLastSample = -1.0F;
+      m_bSampleGap = true;
       m_cLastKicker = null;
       m_cPasser = null;
       m_cShotTeam = null;
@@ -117,11 +169,22 @@ class ModStats {
       return SoccerModule.m_cMatch != null ? SoccerModule.m_cMatch.m_cClockRef.GetMatchTimeF() : 0.0F;
    }
 
+   static PlayerStats GetPlayer(AIFootBaller cFB) {
+      PlayerStats p = (PlayerStats)m_tPlayerStats.get(cFB);
+      if (p == null) {
+         p = new PlayerStats();
+         m_tPlayerStats.put(cFB, p);
+      }
+
+      return p;
+   }
+
    // AIFootBaller.Pass
    static void OnPass(AIFootBaller cFB) {
       if (IsPlaying()) {
          m_cPasser = cFB;
          Get(cFB.m_cTeam).m_nPasses++;
+         GetPlayer(cFB).m_nPasses++;
       }
    }
 
@@ -129,6 +192,23 @@ class ModStats {
    static void OnShot(AIFootBaller cFB) {
       m_cShotTeam = cFB.m_cTeam;
       m_cPasser = null;
+      if (IsPlaying()) {
+         // [mod] en ligne : tireur et position ; l'issue (but, arrêt, contré) vient ensuite, sinon le tir est à côté
+         GetPlayer(cFB).m_nShots++;
+         Shot s = new Shot();
+         s.m_cTeam = cFB.m_cTeam;
+         s.m_nMinute = SoccerModule.m_cMatch != null ? GetMinute(SoccerModule.m_cMatch, GetTime()) : 0;
+         s.m_nNumber = GetListIndex(cFB);
+         Vector v = cFB.GetPosition();
+         s.m_fDepth = ModTactics.Clamp(ModTactics.Depth(cFB.m_nTeam, v), 0.0F, 1.0F);
+         s.m_fLateral = ModTactics.LateralOf(v);
+         TeamStats t = Get(cFB.m_cTeam);
+         if (t.m_vShots.size() < _MAX_SHOTS) {
+            t.m_vShots.addElement(s);
+         }
+
+         m_cOpenShot = s;
+      }
    }
 
    // Ball.KickTo / KickToLob : dernier joueur à avoir frappé le ballon (le buteur en cas de but)
@@ -143,6 +223,13 @@ class ModStats {
       m_cLastSave.m_nSaves++;
       m_fLastSaveTime = GetTime();
       m_cShotTeam = null;
+      m_cSavedShot = null;
+      if (m_cOpenShot != null && m_cOpenShot.m_cTeam != cTeam) {
+         m_cOpenShot.m_nResult = _SHOT_SAVED;
+         m_cSavedShot = m_cOpenShot;
+      }
+
+      m_cOpenShot = null;
    }
 
    // Ball.OnHitFootballer : le ballon touche un joueur sans qu'il le contrôle
@@ -152,6 +239,11 @@ class ModStats {
             AddSave(cFB.m_cTeam);
          } else {
             m_cShotTeam = null; // tir contré
+            if (m_cOpenShot != null && m_cOpenShot.m_cTeam != cFB.m_cTeam) {
+               m_cOpenShot.m_nResult = _SHOT_BLOCKED;
+            }
+
+            m_cOpenShot = null;
          }
       }
    }
@@ -163,6 +255,7 @@ class ModStats {
       if (m_cPasser != null) {
          if (bPlaying && cTeam == m_cPasser.m_cTeam && cFB != m_cPasser) {
             Get(cTeam).m_nPassesOk++;
+            GetPlayer(m_cPasser).m_nPassesOk++;
          }
 
          m_cPasser = null;
@@ -180,6 +273,7 @@ class ModStats {
 
       if (!bSave && bPlaying && m_cLastPossesor != null && cTeam != m_cLastPossesor) {
          Get(cTeam).m_nRecoveries++;
+         GetPlayer(cFB).m_nRecoveries++;
       }
 
       m_cLastPossesor = cTeam;
@@ -191,14 +285,26 @@ class ModStats {
       float fTime = GetTime();
       if (m_cLastSave != null && m_cLastSave != Get(cScoring) && fTime - m_fLastSaveTime < _SAVE_CANCEL_TIME) {
          m_cLastSave.m_nSaves--;
+         if (m_cSavedShot != null && m_cSavedShot.m_cTeam == cScoring) {
+            m_cSavedShot.m_nResult = _SHOT_GOAL; // ballon repoussé dans le but : l'arrêt ne compte pas
+         }
       }
 
+      if (m_cOpenShot != null && m_cOpenShot.m_cTeam == cScoring) {
+         m_cOpenShot.m_nResult = _SHOT_GOAL;
+      }
+
+      m_cOpenShot = null;
+      m_cSavedShot = null;
       Goal g = new Goal();
       g.m_nMinute = GetMinute(cMatch, fTime);
       if (m_cLastKicker != null) {
          g.m_nAnimal = m_cLastKicker.m_nAnimalType;
          g.m_nNumber = GetListIndex(m_cLastKicker);
          g.m_bOwnGoal = m_cLastKicker.m_cTeam != cScoring;
+         if (!g.m_bOwnGoal) {
+            GetPlayer(m_cLastKicker).m_nGoals++;
+         }
       } else {
          g.m_nAnimal = cScoring.m_nAnimalType;
       }
@@ -218,6 +324,185 @@ class ModStats {
    static void OnSuper(Team cTeam, int nType) {
       if (nType >= 0 && nType < 31) {
          Get(cTeam).m_nSuperTypes |= 1 << nType;
+      }
+
+      TeamStats t = Get(cTeam);
+      if (nType >= 0 && t.m_vSupers.size() < _MAX_SUPERS && SoccerModule.m_cMatch != null) {
+         t.m_vSupers.addElement(new int[]{GetMinute(SoccerModule.m_cMatch, GetTime()), nType});
+      }
+   }
+
+   // [mod] en ligne : AIMatch.UpdateGame, à chaque frame de jeu. Toutes les _SAMPLE_STEP secondes de match, la case
+   // de chaque joueur dans la heatmap de son équipe, sa position moyenne, sa distance parcourue, et la case du ballon
+   // pour l'équipe qui l'a. Repère de l'écran Tactique : profondeur 0 = son but, latéral 0 = haut de l'écran.
+   static void OnFrame(AIMatch cMatch) {
+      if (!IsPlaying() || GameField.m_cBall == null) {
+         m_bSampleGap = true;
+         return;
+      }
+
+      float fTime = GetTime();
+      if (m_fLastSample >= 0.0F && fTime >= m_fLastSample && fTime - m_fLastSample < _SAMPLE_STEP) {
+         return;
+      }
+
+      m_fLastSample = fTime;
+      boolean bGap = m_bSampleGap;
+      m_bSampleGap = false;
+      float fLength = GameField.fLineEnd > 0.0F ? GameField.fLineEnd : 1.0F;
+
+      for (int i = 0; i < 2; i++) {
+         Team cTeam = cMatch.GetTeam(i);
+         if (cTeam == null) {
+            continue;
+         }
+
+         TeamStats t = Get(cTeam);
+         int nSide = i; // côté de l'équipe pour la profondeur : celui de ses joueurs
+
+         for (int j = 0; j < cTeam.m_vFootBallers.size(); j++) {
+            AIFootBaller cFB = (AIFootBaller)cTeam.m_vFootBallers.elementAt(j);
+            if (cFB.IsReferee()) {
+               continue;
+            }
+
+            nSide = cFB.m_nTeam;
+            Vector v = cFB.GetPosition();
+            float fDepth = ModTactics.Clamp(ModTactics.Depth(cFB.m_nTeam, v), 0.0F, 1.0F);
+            float fLateral = ModTactics.LateralOf(v);
+            t.m_tHeat[HeatCell(fDepth, fLateral)]++;
+            PlayerStats p = GetPlayer(cFB);
+            p.m_fSumDepth += fDepth;
+            p.m_fSumLateral += fLateral;
+            p.m_nSamples++;
+            if (p.m_bHasLast && !bGap) {
+               float dx = (v.fX - p.m_fLastX) / fLength;
+               float dz = (v.fZ - p.m_fLastZ) / fLength;
+               float fStep = (float)Math.sqrt(dx * dx + dz * dz);
+               if (fStep < _MAX_STEP) {
+                  p.m_fDistance += fStep;
+               }
+            }
+
+            p.m_bHasLast = true;
+            p.m_fLastX = v.fX;
+            p.m_fLastZ = v.fZ;
+         }
+
+         if (cTeam == m_cLastPossesor) {
+            Vector b = GameField.m_cBall.GetPosition();
+            t.m_tBallHeat[HeatCell(ModTactics.Clamp(ModTactics.Depth(nSide, b), 0.0F, 1.0F), ModTactics.LateralOf(b))]++;
+         }
+      }
+   }
+
+   private static int HeatCell(float fDepth, float fLateral) {
+      int d = Math.min(_HEAT_D - 1, Math.max(0, (int)(fDepth * _HEAT_D)));
+      int l = Math.min(_HEAT_L - 1, Math.max(0, (int)(fLateral * _HEAT_L)));
+      return d * _HEAT_L + l;
+   }
+
+   private static int Clip(int n, int nMax) {
+      return Math.max(0, Math.min(nMax, n));
+   }
+
+   // [mod] en ligne : les statistiques du match pour le serveur (PKT_MATCH_STATS, format dans server/protocol.py).
+   // Équipe de l'hôte (à gauche au coup d'envoi) puis celle de l'invité ; même règle d'index que AddRecord.
+   static void PutMatchStats(java.nio.ByteBuffer b, AIMatch cMatch, int nMatchId) {
+      int nHost = cMatch.m_nHalfNo != 0 && !cMatch.m_bGoldGoal ? 1 : 0;
+      b.putInt(nMatchId);
+      b.put((byte)(cMatch.m_bGoldGoal ? 1 : 0));
+      b.put((byte)_HEAT_D);
+      b.put((byte)_HEAT_L);
+      float fLength = GameField.fLineEnd > 0.0F ? GameField.fLineEnd : 1.0F;
+
+      for (int k = 0; k < 2; k++) {
+         int nIndex = k == 0 ? nHost : 1 - nHost;
+         Team cTeam = cMatch.GetTeam(nIndex);
+         TeamStats t = Get(cTeam);
+         b.putShort((short)Clip(cMatch.GetShootCount(nIndex), 32767));
+         b.put((byte)Clip((int)cMatch.GetEntirePossesion(nIndex), 100));
+         b.putShort((short)Clip(t.m_nPassesOk, 32767));
+         b.putShort((short)Clip(t.m_nPasses, 32767));
+         b.putShort((short)Clip(t.m_nRecoveries, 32767));
+         b.putShort((short)Clip(t.m_nSaves, 32767));
+         b.putShort((short)Clip(cMatch.GetSuperCount(nIndex), 32767));
+         b.putInt(t.m_nSuperTypes);
+         b.put((byte)Clip(t.m_nMaxDeficit, 255));
+         int n = Math.min(t.m_vGoals.size(), _MAX_GOALS);
+         b.put((byte)n);
+
+         for (int i = 0; i < n; i++) {
+            Goal g = (Goal)t.m_vGoals.elementAt(i);
+            b.put((byte)Clip(g.m_nMinute, 255));
+            b.put((byte)Math.max(-1, Math.min(127, g.m_nNumber)));
+            b.put((byte)(g.m_bOwnGoal ? 1 : 0));
+         }
+
+         n = t.m_vSupers.size();
+         b.put((byte)n);
+
+         for (int i = 0; i < n; i++) {
+            int[] s = (int[])t.m_vSupers.elementAt(i);
+            b.put((byte)Clip(s[0], 255));
+            b.put((byte)Clip(s[1], 255));
+         }
+
+         n = t.m_vShots.size();
+         b.put((byte)n);
+
+         for (int i = 0; i < n; i++) {
+            Shot s = (Shot)t.m_vShots.elementAt(i);
+            b.put((byte)Clip(s.m_nMinute, 255));
+            b.put((byte)Math.max(-1, Math.min(127, s.m_nNumber)));
+            b.put((byte)Clip(Math.round(s.m_fDepth * 255.0F), 255));
+            b.put((byte)Clip(Math.round(s.m_fLateral * 255.0F), 255));
+            b.put((byte)s.m_nResult);
+         }
+
+         java.util.Vector vPlayers = new java.util.Vector();
+
+         for (int i = 0; i < cTeam.m_vFootBallers.size(); i++) {
+            AIFootBaller cFB = (AIFootBaller)cTeam.m_vFootBallers.elementAt(i);
+            if (!cFB.IsReferee() && GetListIndex(cFB) >= 0) {
+               vPlayers.addElement(cFB);
+            }
+         }
+
+         b.put((byte)vPlayers.size());
+
+         for (int i = 0; i < vPlayers.size(); i++) {
+            AIFootBaller cFB = (AIFootBaller)vPlayers.elementAt(i);
+            PlayerStats p = GetPlayer(cFB);
+            b.put((byte)GetListIndex(cFB));
+            b.put((byte)ModTactics.GetSlot(cFB));
+            b.put((byte)Clip(p.m_nGoals, 255));
+            b.put((byte)Clip(p.m_nShots, 255));
+            b.put((byte)Clip(p.m_nPasses, 255));
+            b.put((byte)Clip(p.m_nPassesOk, 255));
+            b.put((byte)Clip(p.m_nRecoveries, 255));
+            b.putShort((short)Clip(Math.round(p.m_fDistance * 100.0F), 65535)); // longueur du terrain = 100 m
+            float fDepth = p.m_nSamples > 0 ? p.m_fSumDepth / p.m_nSamples : 0.0F;
+            float fLateral = p.m_nSamples > 0 ? p.m_fSumLateral / p.m_nSamples : 0.5F;
+            b.put((byte)Clip(Math.round(fDepth * 255.0F), 255));
+            b.put((byte)Clip(Math.round(fLateral * 255.0F), 255));
+         }
+
+         PutHeat(b, t.m_tHeat);
+         PutHeat(b, t.m_tBallHeat);
+      }
+   }
+
+   // heatmap ramenée à 0..255 : la case la plus fréquentée vaut 255
+   private static void PutHeat(java.nio.ByteBuffer b, int[] tHeat) {
+      int nMax = 0;
+
+      for (int i = 0; i < tHeat.length; i++) {
+         nMax = Math.max(nMax, tHeat[i]);
+      }
+
+      for (int i = 0; i < tHeat.length; i++) {
+         b.put((byte)(nMax > 0 ? (int)((long)tHeat[i] * 255L / nMax) : 0));
       }
    }
 

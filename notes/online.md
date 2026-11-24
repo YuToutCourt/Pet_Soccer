@@ -27,15 +27,19 @@ par lui (voir « Liaison directe »).
 ### Lancer le serveur
 
 ```powershell
-python server\server.py                      # port UDP 7777, comptes dans server\players.db
+docker compose up -d postgres                # la base (docker-compose.yml, mot de passe dans .env)
+python server\server.py --db postgresql://pet-soccer:MOT_DE_PASSE@127.0.0.1:54320/pet-soccer
 python server\server.py --lag 80 --loss 5    # simule une mauvaise connexion (tests)
 python server\server.py --no-direct          # tout le match passe par le serveur
-python server\test_server.py                 # vérifie le serveur sans le jeu (84 points)
+python server\test_server.py                 # vérifie le serveur sans le jeu (151 points, base pet_soccer_test)
 ```
 
-- Python 3, bibliothèque standard seule. Un seul port UDP, une boucle, aucun thread.
-- `--db fichier` : base SQLite des comptes, de l'Elo en ligne et des matchs classés. Par défaut `server\players.db`
-  (hors du dépôt). C'est le seul fichier à sauvegarder et à emporter le jour où le serveur déménage.
+- Python 3 et `psycopg` (`pip install -r server\requirements.txt`). Un seul port UDP, une boucle, aucun thread.
+- `--db postgresql://...` (ou la variable `DATABASE_URL`) : base Postgres des comptes, de l'Elo en ligne, des
+  ligues et de **tous les matchs en ligne** avec leurs tactiques et statistiques (`server\schema.sql`, tables créées
+  au démarrage). Une base injoignable n'arrête pas le serveur : l'erreur est journalisée, la connexion se rouvre.
+- Sur un VPS : `docker compose up -d --build` lance la base, le serveur de jeu (UDP 7777) et le site (`web\web.py`,
+  port 8080 sur 127.0.0.1, à brancher derrière le reverse proxy). Voir « Base et site de stats ».
 - `--lost` (4 s), `--claim` (6 s), `--takeover` (3 s) : délais des forfaits et de la reprise, voir « Partie rapide ».
 - `--lag` et `--jitter` (ms) retardent chaque paquet relayé, `--loss` (%) en perd. Le retard s'ajoute dans chaque
   sens : `--lag 80` ajoute 160 ms à l'aller-retour. Ils coupent la liaison directe, qui leur échapperait.
@@ -88,10 +92,11 @@ par l'état du salon : une perte se rattrape au paquet suivant.
 | 17 `CREATE`, 18 `JOIN` + code, 19 `LEAVE` | jeu → serveur | répétés jusqu'à ce que la réponse le confirme. `LEAVE` sort aussi de la file d'attente. |
 | 20 `STATE` | jeu → serveur | ce que le joueur montre à l'autre, 4 fois par seconde (1 fois pendant un match) |
 | 21 `QUEUE` | jeu → serveur | partie rapide : « j'attends un adversaire », répété 3 fois par seconde tant que le joueur attend |
-| 22 `MATCH` | jeu → serveur | partie classée : numéro du match, phase (en cours, fini, abandon, adversaire perdu), score, « j'envoie des paquets de match ». Une fois par seconde. |
+| 22 `MATCH` | jeu → serveur | tout match en ligne : numéro du match, phase (en cours, fini, abandon, adversaire perdu), score, « j'envoie des paquets de match ». Une fois par seconde. |
+| 25 `MATCH_STATS` | jeu → serveur | jeu de l'hôte, match fini : statistiques des deux équipes (format dans `protocol.read_match_stats`), redites avec `MATCH`. Pas de réponse. |
 | 23 `TOP` | jeu → serveur | demande le classement (toutes les 5 s devant l'écran « en ligne », hors salon) |
 | 32 `INFO` | serveur → jeu | réponse à chacun : code du salon, rôle, nombre de joueurs, nom de l'autre, refus d'entrée ; puis file d'attente, salon classé, Elo du joueur et de l'autre, joueurs connectés, issue du dernier match classé ; clé du salon et adresses de l'autre joueur (liaison directe) ; écart d'Elo accepté dans la file |
-| 33 `PEER` | serveur → jeu | le `STATE` de l'autre joueur, recopié sans être lu |
+| 33 `PEER` | serveur → jeu | le `STATE` de l'autre joueur, recopié tel quel |
 | 34 `RANKS` | serveur → jeu | les 8 premiers du classement (nom, Elo, victoires, nuls, défaites), le rang du joueur, le nombre de classés |
 | 1, 2, 3 | les deux sens | paquets du match (`ModNet`), recopiés tels quels |
 | 4 `PUNCH` | jeu → jeu | sonde de la liaison directe. Ne passe jamais par le serveur. |
@@ -102,14 +107,16 @@ par l'état du salon : une perte se rattrape au paquet suivant.
   numéro du match en cours (0 = il est dans le salon), équipes et tenues retenues pour ce match.
 - **Départ** : l'hôte tire un numéro de match, l'envoie, puis charge le stade. L'invité qui voit un numéro de match
   qu'il n'a pas encore joué charge le même match. Les réglages viennent tous de l'hôte.
-- **Version** : `ModNet._MOD_VERSION` (7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
+- **Version** : `ModNet._MOD_VERSION` (8 depuis les statistiques en ligne ; 7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
   et la file d'attente ne réunit que des joueurs de même version. À augmenter dès que les paquets ou les règles du
   match changent.
-- **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5, 4 côté
-  serveur depuis la ligue en ligne, `notes/online-league.md`). Le serveur accepte les versions de
-  `protocol.LOBBY_PROTOS` (3 et 4) ; un jeu d'une autre version voit « Le serveur n'a pas la même version ».
+- **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5, 4 depuis la
+  ligue en ligne, `notes/online-league.md`, 5 depuis `MATCH_STATS`). Le serveur accepte les versions de
+  `protocol.LOBBY_PROTOS` (3 à 5) ; un jeu d'une autre version voit « Le serveur n'a pas la même version ».
 - Même équipe et même tenue des deux côtés : l'invité prend la tenue suivante.
-- Le serveur ne lit ni `STATE` ni les paquets du match : il n'a pas à changer quand le mod change.
+- Le serveur ne lit pas les paquets du match. Il relaie `STATE` tel quel et en garde une copie lue
+  (`protocol.read_state`) : équipes, tenues, stade et tactique du match qu'il enregistre. `ModLobby.SendState` et
+  `read_state` doivent donc rester d'accord.
 - **Mi-temps** : l'invité qui revoit sa composition la renvoie dans son `STATE` ; l'hôte, qui voit qu'elle a
   changé, l'applique à l'équipe de l'invité (`ModLobby.ReadPeer` → `ModNet.HostRemoteTactics`).
 
@@ -173,6 +180,9 @@ ou, en liaison directe, quand son jeu dit qu'il en envoie (drapeau de `MATCH`).
 | Un joueur quitte le salon classé avant le match (l'autre ne se met pas prêt, par exemple) | Rien : aucun match n'existe, aucun Elo ne bouge. Le salon ferme, chacun repasse par « partie rapide ». |
 | Les deux jeux se taisent en même temps | Pas compté |
 
+- **Salon privé** : même suivi (`MATCH` envoyé pour tout match en ligne depuis la version 8), le match est enregistré
+  dans la base (`kind = 'private'`) sans toucher à l'Elo. Le serveur répond « pas compté » (`RESULT_VOID`) : c'est
+  ce qui arrête les redites du jeu, qui n'affiche rien puisque le match n'était pas classé.
 - Forfait = défaite d'au moins un but d'écart. Si le joueur forfait était mené de plus (0-3), c'est cet écart qui
   compte : quitter un match mal engagé ne coûte pas moins cher que le finir.
 - Un match n'est compté qu'une fois (numéro du match), même annoncé dix fois.
@@ -318,6 +328,32 @@ raccourci. Testé par `test_installer.py` avec une fausse release en `file:///`.
 
 Les amis qui ont une version d'avant 3.2 doivent installer la 3.2 une dernière fois à la main.
 
+## Base et site de stats
+
+Tout match en ligne (partie classée, ligue entre amis, salon privé) est enregistré par `Lobby.settle` →
+`store.Store.record_match` dans Postgres (`server\schema.sql`) :
+
+| Table | Contenu |
+|---|---|
+| `players`, `player_names` | comptes (empreinte du jeton), Elo, bilan classé ; pseudos portés |
+| `matches` | type (`ranked`, `private`, `league`), classé ou non, issue (`played`, `forfeit` + côté), score, stade, durée de mi-temps, but en or, durée réelle |
+| `match_players` | un côté (0 = hôte) : compte, nom, équipe, tenue, résultat W/D/L, Elo avant/après, **tactique** (schéma, 6 rôles, placements des 4 situations, ligne brute), stats d'équipe, heatmaps |
+| `match_footballers` | les 7 joueurs : place dans `Team<Animal>Players` (0 = gardien), place et rôle dans la tactique, buts, csc, tirs, passes, récupérations, distance, position moyenne |
+| `match_events` | fil du match : buts, csc, supers (minute, type), tirs (minute, tireur, position, issue) |
+| `leagues`, `server_status` | ligues en ligne ; état du serveur (joueurs connectés, en file, matchs en cours), réécrit toutes les 10 s |
+
+- Les équipes, le stade et les tactiques viennent du dernier `STATE` de chaque jeu portant le numéro du match (une
+  tactique revue à la mi-temps compte donc).
+- Les statistiques viennent du **jeu de l'hôte**, qui simule (`ModStats.PutMatchStats`, `ModLobby.TakeStats`) :
+  `MATCH_STATS` est pris au coup de sifflet final ou quand on quitte, puis redit avec `MATCH`. Celles de l'invité
+  sont ignorées. Arrivées avant la fin du match, elles attendent (`Lobby.pending_stats`) ; juste après, elles
+  sont ajoutées au match déjà enregistré (`Lobby.recorded`). Un hôte dont le jeu plante : match sans statistiques
+  (`has_stats = false`).
+- Positions : repère de l'écran Tactique (profondeur 0 = son but, latéral 0 = haut de l'écran), voir `notes/stats.md`.
+- Site : `web\web.py` (Flask, connexion en lecture seule, image Docker à part) : classement, matchs, profil (courbe d'Elo, forme,
+  équipes et schémas favoris, moyennes), page d'un match (frise, stats comparées, carte tactique prévu / réel,
+  heatmaps, tirs, joueurs), méta (équipes, schémas, rôles, buteurs, équipe contre équipe).
+
 ## Ce qui est coupé en ligne
 
 - Triches du menu Mods (vitesse, puissance de tir, supers infinis, super imposé) : sans effet pendant un match en
@@ -449,8 +485,8 @@ Le clavier va à la fenêtre active : celle du client joue l'équipe de droite, 
 À la fermeture des deux jeux, le script remet `debugconf.scr` et les réglages vidéo de `game_dev`, et arrête le
 serveur (journal : `build\online-server.log`).
 
-Les comptes et l'Elo de ces tests vont dans `build\online-test.db`, jamais dans `server\players.db`. Supprimer ce
-fichier remet le classement de test à zéro. `game_dev_b` s'y appelle « invite » (`NetName`) : les deux dossiers
+Les comptes, l'Elo et les matchs de ces tests vont dans la base Postgres `pet_soccer_test` (`server\testdb.py`),
+jamais dans celle du vrai serveur. `-ResetDb` la vide avant le test ; `server\test_server.py` la vide aussi. `game_dev_b` s'y appelle « invite » (`NetName`) : les deux dossiers
 ont sinon le même nom de profil.
 
 À la main, dans `debugconf.scr`, déclarations **avant** les valeurs :
