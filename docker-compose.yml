@@ -31,7 +31,9 @@ services:
     container_name: pet-soccer-game
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://pet-soccer:${POSTGRES_PASSWORD}@postgres:5432/pet-soccer
+      # mot de passe à part (lu par libpq) : il peut contenir / + = @ sans casser l'URL
+      DATABASE_URL: postgresql://pet-soccer@postgres:5432/pet-soccer
+      PGPASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "${GAME_PORT:-7777}:7777/udp"
     depends_on:
@@ -44,7 +46,9 @@ services:
     container_name: pet-soccer-web
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://pet-soccer:${POSTGRES_PASSWORD}@postgres:5432/pet-soccer
+      # mot de passe à part (lu par libpq) : il peut contenir / + = @ sans casser l'URL
+      DATABASE_URL: postgresql://pet-soccer@postgres:5432/pet-soccer
+      PGPASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
     depends_on:
