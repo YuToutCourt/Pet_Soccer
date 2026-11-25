@@ -8,6 +8,7 @@ const LINKS = [
   { href: "/classement", label: "Classement" },
   { href: "/matches", label: "Matchs" },
   { href: "/meta", label: "Méta" },
+  { href: "/patch", label: "Patch" },
 ];
 
 export default function NavLinks() {

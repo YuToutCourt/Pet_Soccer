@@ -1,5 +1,5 @@
 // Stats des equipes (mod) - lu par ETeams au demarrage, sans recompiler.
-// Team("Animal", Force, Precision, Reflexe)   90 = valeur neutre
+// Team("Animal", Force, Precision, Reflexe)   90 = valeur neutre, on peut depasser 100
 //   Force     -> puissance des tirs
 //   Precision -> ecart gauche-droite des tirs (plus haut = plus precis ; la hauteur ne change pas)
 //   Reflexe   -> vitesse de deplacement (gardien compris)
@@ -7,25 +7,34 @@
 //
 // Effects(a, b, c) : effet en % par point d'ecart a 90
 //   a = puissance des tirs, b = dispersion, c = vitesse.
-//   Ex. Force 100 avec a=1 -> tirs 10 % plus forts ; Precision 80 avec b=3 -> 30 % de dispersion en plus.
+//   Ex. Force 110 avec a=1 -> tirs 20 % plus forts ; Precision 110 avec b=2 -> 40 % de dispersion en moins.
+//
+// Equilibrage (2026-11-25), voir notes/team-stats.md :
+//   valeur = (Force-90) + (Precision-90) + 2 x (Reflexe-90) + bonus hitbox = 10 pour chaque equipe
+//   La vitesse compte double (elle sert a tous les joueurs, tout le match).
+//   Bonus hitbox = 0,8 x (rayon - 30), rayon = largeur du modele / 2 (code en dur dans AI<Animal>.UpdateExtents) :
+//   il agrandit la portee de reception (30 + rayon + rayon du ballon, ReceiveRadius d'ai_params.scr) et de tacle (110 + rayon).
+//     Gorille 110 -> +20   Taureau 101 -> +16   Dino 100 -> +16   Girafe 90 -> +12 (+3 pour la taille 147)
+//     Lion 62 -> +1   Poule/Panthere/Tigre 60, Ours/Panda 59.5 -> 0
+//     Grenouille 55 -> -2   Tortue 51 -> -4   Requin 48 -> -5   Robot 45 -> -6
 
 !Team(s,i,i,i)
 !Effects(f,f,f)
 
-Effects(1.0, 3.0, 0.5)
+Effects(1.0, 2.0, 0.8)
 
-//    Animal       Force  Precision  Reflexe
-Team("Bear",        90,     90,       90)
-Team("Bull",       100,     90,       80)
-Team("Chicken",     80,     90,      100)
-Team("Dino",        95,     85,       90)
-Team("Frog",        85,     85,      100)
-Team("Giraffe",     95,     95,       80)
-Team("Gorilla",     90,     90,       90)
-Team("Lion",        90,    100,       80)
-Team("Panther",     90,    100,       80)
-Team("Shark",       90,     85,       90)
-Team("Turtle",      90,    100,       80)
-Team("Robo",        80,     95,       95)
-Team("Panda",      100,     85,       85)
-Team("Tiger",       90,     90,      100)
+//    Animal       Force  Precision  Reflexe    hitbox  profil
+Team("Bear",        95,     95,       90)    //   0    polyvalent
+Team("Bull",       110,     80,       82)    // +16    gros tireur lent
+Team("Chicken",     80,     90,      100)    //   0    rapide
+Team("Dino",       100,     84,       85)    // +16    costaud
+Team("Frog",        86,     86,      100)    //  -2    rapide
+Team("Giraffe",     95,    100,       80)    // +15    grand, jeu aerien
+Team("Gorilla",    100,     80,       85)    // +20    mur defensif
+Team("Lion",       100,    105,       82)    //  +1    finisseur
+Team("Panther",     84,    100,       93)    //   0    vif et precis
+Team("Shark",      110,     85,       90)    //  -5    frappeur
+Team("Turtle",     100,    114,       80)    //  -4    sniper lent
+Team("Robo",        80,    106,       95)    //  -6    petit, precis, rapide
+Team("Panda",      110,     80,       90)    //   0    puissant
+Team("Tiger",      100,     80,       95)    //   0    puissant et rapide
