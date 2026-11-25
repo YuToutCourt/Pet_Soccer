@@ -37,6 +37,12 @@ class ModSupers {
    static float m_fDoubleTime = 2.5F;
    // secondes de possession par lettre de la jauge (Strategy.m_fSuperUpgradeTime) ; 0 = valeur du jeu (6)
    static float m_fFillTime = 10.0F;
+   // autres sources de lettres (AddAction) : une lettre toutes les X actions de l'équipe ; 0 = source désactivée
+   static final int _ACT_SHOT = 0;
+   static final int _ACT_RECOVERY = 1;
+   static final int _ACT_SAVE = 2;
+   static final String[] _ACT_NAMES = new String[]{"tir cadre", "recuperation", "arret"};
+   static int[] m_nPerLetter = new int[]{8, 15, 8};
    // effets à durée, par côté (Team.m_nSide) : fin en temps de match, -1 = inactif
    static float[] m_fFreezeEnd = new float[]{-1.0F, -1.0F};
    static float[] m_fMagnetEnd = new float[]{-1.0F, -1.0F};
@@ -114,10 +120,82 @@ class ModSupers {
             m_fDoubleTime = key.GetFParam(0);
          } else if (key.Equals("FillTime")) {
             m_fFillTime = Math.max(0.0F, key.GetFParam(0));
+         } else if (key.Equals("ShotsPerLetter")) {
+            m_nPerLetter[_ACT_SHOT] = Math.max(0, key.GetIParam(0));
+         } else if (key.Equals("RecoveriesPerLetter")) {
+            m_nPerLetter[_ACT_RECOVERY] = Math.max(0, key.GetIParam(0));
+         } else if (key.Equals("SavesPerLetter")) {
+            m_nPerLetter[_ACT_SAVE] = Math.max(0, key.GetIParam(0));
          }
       }
 
-      GameObject.CrashLog("[mod] supers charges depuis " + _FILE + " (FillTime " + m_fFillTime + ")\n");
+      GameObject.CrashLog("[mod] supers charges depuis " + _FILE + " (FillTime " + m_fFillTime + ", lettre tous les " + m_nPerLetter[_ACT_SHOT] + " tirs / " + m_nPerLetter[_ACT_RECOVERY] + " recuperations / " + m_nPerLetter[_ACT_SAVE] + " arrets)\n");
+   }
+
+   // ---------------------------------------------------------------- jauge
+
+   // une action de l'équipe (tir cadré, récupération, arrêt : ModStats) ;
+   // toutes les m_nPerLetter[nAct] actions, une lettre de plus (Team.IncreaseSuperFillCount gère HUD, son, disponibilité)
+   static void AddAction(Team t, int nAct) {
+      AddAction(t, nAct, true);
+   }
+
+   // bInPlay = false pour un tir cadré qui finit en but : le jeu n'est déjà plus « en cours » à ce moment-là
+   static void AddAction(Team t, int nAct, boolean bInPlay) {
+      Load();
+      if (!(t instanceof AITeam) || nAct < 0 || nAct >= m_nPerLetter.length || m_nPerLetter[nAct] <= 0) {
+         return;
+      }
+
+      // en ligne, seul l'hôte simule ; pas de lettre hors du jeu, en ralenti, au but en or, pendant un super,
+      // ni quand la jauge est pleine (pas de réserve)
+      if (ModNet.IsClient() || SoccerModule.m_cMatch == null || GameField.m_cBall == null || bInPlay && !AIMatch.IsMatchState(0)
+         || GameField.m_cBall.IsReplaying() || SoccerModule.m_cMatch.m_bGoldGoal || t.m_bSuperDoing || t.m_nSuperFillCount >= 5) {
+         return;
+      }
+
+      int[] n = ((AITeam)t).m_nModSuperActions;
+      n[nAct]++;
+      if (SoccerGame.m_bDebug) {
+         GameObject.CrashLog("[mod] lettre super : " + t.m_sName + " " + _ACT_NAMES[nAct] + " " + n[nAct] + "/" + m_nPerLetter[nAct] + "\n");
+      }
+
+      if (n[nAct] >= m_nPerLetter[nAct]) {
+         n[nAct] = 0;
+         t.IncreaseSuperFillCount();
+      }
+   }
+
+   // AIMatch.Restart : nouveau match, compteurs à zéro
+   static void ResetCounters(Match cMatch) {
+      for (int s = 0; s < 2; s++) {
+         Team t = cMatch.GetTeam(s);
+         if (t instanceof AITeam) {
+            int[] n = ((AITeam)t).m_nModSuperActions;
+            for (int i = 0; i < n.length; i++) {
+               n[i] = 0;
+            }
+         }
+      }
+   }
+
+   // AIMatch.ChangeTeamSides, après l'échange : les équipes gardent leur jauge, le HUD (un par côté) suit
+   static void OnSidesSwapped(Match cMatch) {
+      PetSoccerHud cHud = SoccerModule.GetHud();
+      // en ligne, le client reçoit les jauges de l'hôte juste après l'échange : ses valeurs locales (vides) ne
+      // doivent pas s'afficher entre-temps
+      if (cHud == null || ModNet.IsClient()) {
+         return;
+      }
+
+      for (int s = 0; s < 2; s++) {
+         Team t = cMatch.GetTeam(s);
+         if (t != null) {
+            // l'icône du super complet reste affichée sous 5 lettres (HudSuper.LightLetters ne la cache pas)
+            cHud.FlashSuperIconEnd(s);
+            cHud.LightSuperLetters(t.m_nSuperFillCount, t.m_nSuperType, s);
+         }
+      }
    }
 
    // tirage des supers : générateur à part, graine selon l'heure. Celui du jeu (GameObject.RandomFloat) part toujours

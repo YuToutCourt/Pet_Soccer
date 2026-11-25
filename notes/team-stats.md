@@ -55,7 +55,9 @@ Avant l'équilibrage, le Gorille était à 90/90/90 avec la plus grosse hitbox, 
 
 Règle : `(Force−90) + (Précision−90) + 2×(Réflexe−90) + bonus hitbox = 10` pour toutes les équipes.
 - La vitesse compte double : elle sert à tous les joueurs pendant tout le match, alors que Force et Précision ne servent qu'aux tirs.
-- Bonus hitbox = 0,8 × (rayon − 30), +3 pour la taille de la Girafe.
+- Bonus hitbox = 0,8 × (rayon − 30), +12 pour la taille de la Girafe (147 de haut, contre 105 pour le Dino) : elle capte
+  les ballons aériens plus haut que tout le monde (`AIFootBaller.java:1866`) et, en gardienne, ne saute qu'au-dessus
+  de 167 (`Strategy.java:781`). Passé de +3 à +12 le 2026-11-25 : Girafe 95/100/80 → 95/91/80.
 - Effet de la Précision passé de 3 à 2 % par point pour permettre des valeurs au-dessus de 100 (Tortue 114 → dispersion × 0,52 ; avec 3 %, elle tombait au plancher de 0,1).
 - Les grosses hitbox paient en vitesse et en précision ; les petites ont droit à des valeurs au-delà de 100.
 

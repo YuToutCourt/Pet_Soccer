@@ -19,10 +19,22 @@
 !DoubleFoolChance(f)
 !DoubleTime(f)
 !FillTime(f)
+!ShotsPerLetter(i)
+!RecoveriesPerLetter(i)
+!SavesPerLetter(i)
 
 // Remplissage de la jauge : secondes de possession par lettre (5 lettres = 1 super).
 // Jeu d'origine : 6 (30 s pour un super). 0 = garder la valeur du jeu. Vaut pour les deux equipes.
 FillTime(10)
+
+// Autres sources de lettres : une lettre toutes les X actions de l equipe (0 = desactive).
+// Rien pendant un super, au but en or, ni quand la jauge est pleine. La jauge est gardee a la mi-temps.
+// tirs cadres : arretes par le gardien ou buts (un super tir ne compte pas)
+ShotsPerLetter(8)
+// ballons repris a l adversaire (tacle, interception)
+RecoveriesPerLetter(15)
+// arrets du gardien
+SavesPerLetter(8)
 
 // Tirage du super quand la jauge se remplit : poids relatifs (0 = jamais).
 // Jeu d'origine : 25 pour chacun des 4 premiers, 0 pour les nouveaux.

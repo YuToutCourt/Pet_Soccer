@@ -14,7 +14,7 @@
 //   La vitesse compte double (elle sert a tous les joueurs, tout le match).
 //   Bonus hitbox = 0,8 x (rayon - 30), rayon = largeur du modele / 2 (code en dur dans AI<Animal>.UpdateExtents) :
 //   il agrandit la portee de reception (30 + rayon + rayon du ballon, ReceiveRadius d'ai_params.scr) et de tacle (110 + rayon).
-//     Gorille 110 -> +20   Taureau 101 -> +16   Dino 100 -> +16   Girafe 90 -> +12 (+3 pour la taille 147)
+//     Gorille 110 -> +20   Taureau 101 -> +16   Dino 100 -> +16   Girafe 90 -> +12 (+12 pour la taille 147 : ballons aeriens, gardienne qui ne saute pas)
 //     Lion 62 -> +1   Poule/Panthere/Tigre 60, Ours/Panda 59.5 -> 0
 //     Grenouille 55 -> -2   Tortue 51 -> -4   Requin 48 -> -5   Robot 45 -> -6
 
@@ -29,7 +29,7 @@ Team("Bull",       110,     80,       82)    // +16    gros tireur lent
 Team("Chicken",     80,     90,      100)    //   0    rapide
 Team("Dino",       100,     84,       85)    // +16    costaud
 Team("Frog",        86,     86,      100)    //  -2    rapide
-Team("Giraffe",     95,    100,       80)    // +15    grand, jeu aerien
+Team("Giraffe",     95,     91,       80)    // +24    grand, jeu aerien
 Team("Gorilla",    100,     80,       85)    // +20    mur defensif
 Team("Lion",       100,    105,       82)    //  +1    finisseur
 Team("Panther",     84,    100,       93)    //   0    vif et precis

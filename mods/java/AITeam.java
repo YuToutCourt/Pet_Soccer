@@ -1,4 +1,6 @@
 public class AITeam extends Team {
+   // [mod] actions comptées pour la jauge SUPER (ModSupers.AddAction) : tirs, récupérations, arrêts
+   int[] m_nModSuperActions = new int[3];
    AISystem m_cAISystem = null;
    Order m_cOrder = null;
    boolean m_bInited = false;

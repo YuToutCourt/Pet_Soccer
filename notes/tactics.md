@@ -177,6 +177,16 @@ de joueur pourrait être mieux, voire 6 touches pour prendre le joueur qu'on veu
 seulement un remplissage plus lent. `FillTime(10)` dans `supers.scr` (jeu d'origine 6 : 50 s de possession pour un super
 au lieu de 30), appliqué aux deux équipes après `ModDifficulty.Apply` (`Strategy`). 0 = valeur du jeu.
 
+**Jauge gardée à la mi-temps, autres sources de lettres** (todo.md, 2026-11-25). Le jeu vidait la jauge au changement
+de côté (`AIMatch.ChangeTeamSides` → `ResetSupers`) ; maintenant chaque équipe garde ses lettres, son type de super et
+ses compteurs, et `ModSupers.OnSidesSwapped` rallume le HUD du bon côté (l'icône est d'abord cachée : `LightLetters` ne la
+cache jamais sous 5 lettres). Remise à zéro seulement au début du match. Nouvelles sources (`ModSupers.AddAction`,
+compteurs `AITeam.m_nModSuperActions`) : une lettre tous les `ShotsPerLetter(8)` tirs cadrés (choix de l'utilisateur : comptés à
+l'issue, arrêt du gardien dans `ModStats.AddSave` ou but dans `ModStats.OnGoal` ; un tir arrêté puis repoussé dans le but
+ne compte qu'une fois ; pas le super tir, `ModStats.Shot.m_bSuper` ; le poteau seul ne compte pas), `RecoveriesPerLetter(15)` ballons repris (`ModStats.OnPossession`), `SavesPerLetter(8)` arrêts du gardien
+(`ModStats.AddSave`) ; 0 = source coupée. Rien pendant un super, au but en or, en ralenti, ni jauge pleine (pas de réserve) ;
+en ligne, seul l'hôte compte. Journal en debug : `[mod] lettre super : <équipe> tir|recuperation|arret n/X`.
+
 **Tirage du super** (bug signalé le 2026-11-20 : « j'ai toujours le même super des 2 côtés ») : le jeu tire avec
 `GameObject.RandomFloat`, un `Random(0)` à graine fixe, donc les mêmes tirages d'un lancement à l'autre, et les deux
 équipes tombaient souvent sur le même type. `ModSupers.GetRandomSuper(équipe)` tire maintenant avec son propre

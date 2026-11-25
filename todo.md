@@ -7,7 +7,7 @@ Un joueur peut modifier les stats d'équipe et cela est utiliser pour le multi (
 Les super à garder entre les mi-temps
 Tout les X tir stack du super
 Trouver d'autre moyen d'avoir des super
-Equilibrer les stats 
+
 Pouvoir changer les touches de changement de joueur 123456 à ce qu'on veut
 
 

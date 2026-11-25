@@ -304,6 +304,7 @@ public class AIMatch extends Match {
       this.cSpecialBallSel.SetActive(false);
       this.MakeWeatherEvents(SoccerGame.GetSoccerModule().m_nLevelID);
       this.ResetSupers();
+      ModSupers.ResetCounters(this); // [mod] compteurs tirs/récupérations/arrêts de la jauge
       super.m_nScoreLeft = super.m_nScoreRight = 0;
       this.ResetStatistics();
       this.RestoreStartPositions(true);
@@ -401,7 +402,7 @@ public class AIMatch extends Match {
       ((AITeam)super.m_teams[0]).FixOrder();
       ((AITeam)super.m_teams[1]).FixOrder();
       this.FixControledTeamSide();
-      this.ResetSupers();
+      ModSupers.OnSidesSwapped(this); // [mod] la jauge SUPER est gardée à la mi-temps (le jeu la vidait : ResetSupers)
       this.m_bTeamChangedSides = true;
    }
 

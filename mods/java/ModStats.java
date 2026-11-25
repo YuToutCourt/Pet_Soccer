@@ -103,6 +103,7 @@ class ModStats {
       float m_fDepth; // position du tireur, repère de son équipe
       float m_fLateral;
       int m_nResult = _SHOT_MISSED;
+      boolean m_bSuper; // super tir : ne recharge pas la jauge SUPER
    }
 
    static class Goal {
@@ -202,6 +203,7 @@ class ModStats {
          Vector v = cFB.GetPosition();
          s.m_fDepth = ModTactics.Clamp(ModTactics.Depth(cFB.m_nTeam, v), 0.0F, 1.0F);
          s.m_fLateral = ModTactics.LateralOf(v);
+         s.m_bSuper = GameField.m_cBall.IsSuperShot();
          TeamStats t = Get(cFB.m_cTeam);
          if (t.m_vShots.size() < _MAX_SHOTS) {
             t.m_vShots.addElement(s);
@@ -222,11 +224,13 @@ class ModStats {
       m_cLastSave = Get(cTeam);
       m_cLastSave.m_nSaves++;
       m_fLastSaveTime = GetTime();
+      ModSupers.AddAction(cTeam, ModSupers._ACT_SAVE); // [mod] lettre SUPER tous les X arrêts
       m_cShotTeam = null;
       m_cSavedShot = null;
       if (m_cOpenShot != null && m_cOpenShot.m_cTeam != cTeam) {
          m_cOpenShot.m_nResult = _SHOT_SAVED;
          m_cSavedShot = m_cOpenShot;
+         OnShotOnTarget(m_cOpenShot); // [mod] tir cadré (arrêté) : jauge SUPER du tireur
       }
 
       m_cOpenShot = null;
@@ -274,9 +278,17 @@ class ModStats {
       if (!bSave && bPlaying && m_cLastPossesor != null && cTeam != m_cLastPossesor) {
          Get(cTeam).m_nRecoveries++;
          GetPlayer(cFB).m_nRecoveries++;
+         ModSupers.AddAction(cTeam, ModSupers._ACT_RECOVERY); // [mod] lettre SUPER toutes les X récupérations
       }
 
       m_cLastPossesor = cTeam;
+   }
+
+   // [mod] tir cadré (arrêté par le gardien ou but) : une action « tir » pour la jauge SUPER, sauf le super tir
+   private static void OnShotOnTarget(Shot s) {
+      if (!s.m_bSuper) {
+         ModSupers.AddAction(s.m_cTeam, ModSupers._ACT_SHOT, false);
+      }
    }
 
    // AIMatch.OnGoal (nTeam = index de l'équipe qui marque)
@@ -292,6 +304,8 @@ class ModStats {
 
       if (m_cOpenShot != null && m_cOpenShot.m_cTeam == cScoring) {
          m_cOpenShot.m_nResult = _SHOT_GOAL;
+         // [mod] tir cadré (but) ; un tir arrêté puis repoussé dans le but a déjà compté à l'arrêt (m_cOpenShot à null)
+         OnShotOnTarget(m_cOpenShot);
       }
 
       m_cOpenShot = null;
