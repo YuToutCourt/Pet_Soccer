@@ -9,7 +9,7 @@ chacun l'adresse de l'autre) et le relais ne sert plus que de secours. La partie
 joueurs d'Elo proche dans un salon classé : le résultat change leur Elo en ligne, gardé avec les
 comptes dans une base Postgres (--db, ou la variable DATABASE_URL ; schéma dans schema.sql). Chaque match en
 ligne y est enregistré avec les tactiques et les statistiques envoyées par le jeu de l'hôte, pour le site
-(web.py). La base garde aussi les ligues en ligne (leagues.py) : plusieurs amis dans une ligue à 14, les
+(web/). La base garde aussi les ligues en ligne (leagues.py) : plusieurs amis dans une ligue à 14, les
 autres équipes à l'IA, une journée fermée au bout d'un délai.
 Un seul port UDP ; seule dépendance : psycopg (pip install "psycopg[binary]"). Détails dans notes/online.md.
 

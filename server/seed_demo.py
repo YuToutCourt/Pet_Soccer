@@ -1,8 +1,8 @@
-"""Remplit une base Postgres de démonstration avec de faux joueurs et de faux matchs, pour voir le site (web/web.py).
+"""Remplit une base Postgres de démonstration avec de faux joueurs et de faux matchs, pour voir le site (web/).
 
     python server\\seed_demo.py                      # base pet_soccer_demo du Postgres local, vidée puis remplie
     python server\\seed_demo.py --matches 800 --players 40 --seed 7
-    python web\\web.py --db postgresql://pet-soccer:toor@127.0.0.1:54320/pet_soccer_demo
+    cd web && DATABASE_URL=postgresql://pet-soccer:toor@127.0.0.1:54320/pet_soccer_demo npm run dev
 
 Les matchs passent par store.Store.record_match, comme ceux du vrai serveur : Elo, tactiques, statistiques, fil du
 match et heatmaps ont le format réel. Ils sont étalés sur les dernières semaines. Ne vise jamais la vraie base :

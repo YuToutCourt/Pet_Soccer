@@ -1,0 +1,253 @@
+@import "tailwindcss";
+
+/* Pet Soccer Online : pelouse du menu du jeu, boutons pilule jaune/orange, rouge du « pet », ballon blanc. */
+:root {
+  --grass-950: #03170a;
+  --grass-900: #062611;
+  --grass-850: #083117;
+  --grass-800: #0b3d1c;
+  --grass-700: #0f5224;
+  --grass-600: #166b2f;
+
+  --card: rgba(3, 22, 9, 0.72);
+  --card-strong: rgba(2, 16, 7, 0.88);
+  --line: rgba(255, 244, 160, 0.12);
+  --line-strong: rgba(255, 216, 74, 0.32);
+
+  --gold-100: #fff4a0;
+  --gold-300: #ffd84a;
+  --gold-500: #ecba28;
+  --gold-700: #e07a10;
+  --gold-900: #8c4a00;
+  --pet-red: #e3141b;
+  --pet-red-light: #ff4a3d;
+  --ball: #f7f8f4;
+
+  --ink: #eef5ea;
+  --ink-dim: #b2c8b0;
+  --ink-muted: #7d9a7e;
+
+  --win: #5fd38d;
+  --draw: #f5a623;
+  --loss: #ff5a64;
+
+  --diamant: #70a6ff;
+}
+
+@theme inline {
+  --color-grass-950: var(--grass-950);
+  --color-grass-900: var(--grass-900);
+  --color-grass-850: var(--grass-850);
+  --color-grass-800: var(--grass-800);
+  --color-grass-700: var(--grass-700);
+  --color-grass-600: var(--grass-600);
+  --color-card: var(--card);
+  --color-card-strong: var(--card-strong);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-gold-100: var(--gold-100);
+  --color-gold-300: var(--gold-300);
+  --color-gold-500: var(--gold-500);
+  --color-gold-700: var(--gold-700);
+  --color-pet: var(--pet-red);
+  --color-ball: var(--ball);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-muted: var(--ink-muted);
+  --color-win: var(--win);
+  --color-draw: var(--draw);
+  --color-loss: var(--loss);
+  --color-diamant: var(--diamant);
+  --font-sans: var(--font-nunito);
+  --font-display: var(--font-lilita);
+}
+
+html {
+  color-scheme: dark;
+  background: var(--grass-950);
+}
+
+body {
+  color: var(--ink);
+  background-color: var(--grass-900);
+  /* bandes de tonte + halo de projecteur, comme le fond du menu */
+  background-image:
+    radial-gradient(ellipse 90% 60% at 50% -10%, rgba(255, 244, 160, 0.13), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 110%, rgba(0, 0, 0, 0.55), transparent 70%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0 90px, transparent 90px 180px),
+    linear-gradient(180deg, var(--grass-800), var(--grass-900) 40%, var(--grass-950));
+  background-attachment: fixed;
+}
+
+::selection {
+  background: var(--gold-500);
+  color: #1a1200;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold-300);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@layer components {
+  /* Titre façon texte du menu : blanc, contour sombre et ombre portée */
+  .title-game {
+    font-family: var(--font-lilita);
+    letter-spacing: 0.01em;
+    color: #fff;
+    text-shadow:
+      0 2px 0 rgba(0, 0, 0, 0.55),
+      0 0 1px rgba(0, 0, 0, 0.9),
+      0 6px 18px rgba(0, 0, 0, 0.35);
+  }
+
+  .title-gold {
+    font-family: var(--font-lilita);
+    background: linear-gradient(180deg, var(--gold-100) 0%, var(--gold-300) 38%, var(--gold-500) 60%, var(--gold-700) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    /* le text-shadow hérité de .title-game se verrait à travers le texte transparent */
+    text-shadow: none;
+    filter: drop-shadow(0 2px 0 rgba(60, 25, 0, 0.75)) drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35));
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 1.25rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(6px);
+  }
+
+  /* Bouton pilule du menu : dégradé jaune -> orange, reflet en haut */
+  .btn-pill {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    font-family: var(--font-lilita);
+    color: #fff;
+    text-shadow: 0 1px 0 rgba(90, 40, 0, 0.9), 0 0 2px rgba(90, 40, 0, 0.6);
+    background: linear-gradient(180deg, var(--gold-100) 0%, var(--gold-300) 30%, var(--gold-500) 55%, var(--gold-700) 100%);
+    box-shadow:
+      0 4px 0 var(--gold-900),
+      0 8px 20px rgba(0, 0, 0, 0.4),
+      inset 0 -3px 6px rgba(160, 60, 0, 0.35);
+    transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  }
+  .btn-pill::before {
+    content: "";
+    position: absolute;
+    inset: 3px 12% auto 12%;
+    height: 40%;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0));
+    pointer-events: none;
+  }
+  .btn-pill:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+  }
+  .btn-pill:active {
+    transform: translateY(3px);
+    box-shadow: 0 1px 0 var(--gold-900), 0 4px 10px rgba(0, 0, 0, 0.4), inset 0 -3px 6px rgba(160, 60, 0, 0.35);
+  }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    color: var(--ink);
+    background: rgba(0, 0, 0, 0.25);
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .btn-ghost:hover {
+    background: rgba(255, 216, 74, 0.1);
+    border-color: var(--gold-300);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .label {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .data-table th {
+    text-align: left;
+    padding: 0.7rem 0.85rem;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .data-table tbody tr {
+    transition: background 120ms ease;
+  }
+  .data-table tbody tr:hover {
+    background: rgba(255, 244, 160, 0.04);
+  }
+}
+
+@keyframes float-ball {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-10px) rotate(12deg); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.anim-float { animation: float-ball 6s ease-in-out infinite; }
+.anim-pulse { animation: pulse-dot 1.8s ease-in-out infinite; }
+.anim-rise { animation: rise 500ms ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

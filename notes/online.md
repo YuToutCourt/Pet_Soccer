@@ -38,7 +38,7 @@ python server\test_server.py                 # vérifie le serveur sans le jeu (
 - `--db postgresql://...` (ou la variable `DATABASE_URL`) : base Postgres des comptes, de l'Elo en ligne, des
   ligues et de **tous les matchs en ligne** avec leurs tactiques et statistiques (`server\schema.sql`, tables créées
   au démarrage). Une base injoignable n'arrête pas le serveur : l'erreur est journalisée, la connexion se rouvre.
-- Sur un VPS : `docker compose up -d --build` lance la base, le serveur de jeu (UDP 7777) et le site (`web\web.py`,
+- Sur un VPS : `docker compose up -d --build` lance la base, le serveur de jeu (UDP 7777) et le site (`web\`, Next.js,
   port 8080 sur 127.0.0.1, à brancher derrière le reverse proxy). Voir « Base et site de stats ».
 - `--lost` (4 s), `--claim` (6 s), `--takeover` (3 s) : délais des forfaits et de la reprise, voir « Partie rapide ».
 - `--lag` et `--jitter` (ms) retardent chaque paquet relayé, `--loss` (%) en perd. Le retard s'ajoute dans chaque
@@ -350,7 +350,8 @@ Tout match en ligne (partie classée, ligue entre amis, salon privé) est enregi
   sont ajoutées au match déjà enregistré (`Lobby.recorded`). Un hôte dont le jeu plante : match sans statistiques
   (`has_stats = false`).
 - Positions : repère de l'écran Tactique (profondeur 0 = son but, latéral 0 = haut de l'écran), voir `notes/stats.md`.
-- Site : `web\web.py` (Flask, connexion en lecture seule, image Docker à part) : classement, matchs, profil (courbe d'Elo, forme,
+- Site : `web\` (Next.js 16, connexion en lecture seule, image Docker à part) : accueil (présentation du mod, téléchargement de
+  la dernière Release GitHub), classement, matchs, profil (courbe d'Elo, forme,
   équipes et schémas favoris, moyennes), page d'un match (frise, stats comparées, carte tactique prévu / réel,
   heatmaps, tirs, joueurs), méta (équipes, schémas, rôles, buteurs, équipe contre équipe).
 

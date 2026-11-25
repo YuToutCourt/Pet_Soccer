@@ -1,4 +1,4 @@
-# Pet Soccer en ligne : base Postgres, serveur de jeu (server/, UDP 7777) et site de stats (web/, Flask).
+# Pet Soccer en ligne : base Postgres, serveur de jeu (server/, UDP 7777) et site (web/, Next.js : présentation du mod, téléchargement, stats).
 #
 #   cp .env.example .env        # puis mettre un vrai mot de passe dans .env
 #   docker compose up -d --build
@@ -40,7 +40,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Site de stats (dossier web/), en lecture seule sur la base. À brancher derrière le reverse proxy du VPS.
+  # Site (dossier web/, Next.js), en lecture seule sur la base. À brancher derrière le reverse proxy du VPS.
   web:
     build: ./web
     container_name: pet-soccer-web
