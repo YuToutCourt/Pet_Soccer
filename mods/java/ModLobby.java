@@ -11,7 +11,11 @@ import java.nio.ByteBuffer;
 // redit tout ce que le joueur veut (« je crée un salon », « je suis dans ce salon avec cette équipe »), et le
 // serveur répond à chacun par l'état du salon. Une perte se rattrape donc au paquet suivant.
 class ModLobby {
-   static final int _LOBBY_PROTO = 5; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne ; 5 : statistiques
+   static final int _LOBBY_PROTO = 6; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne ; 5 : statistiques ;
+   // 6 : secret de session (donné par PKT_INFO, redit dans chaque paquet), paquets complétés à _MIN_SIZE octets
+   static final int _MIN_SIZE = 96; // LOBBY_MIN_SIZE de protocol.py : le serveur ignore un paquet plus court
+   static final int _HEAD_SIZE = 17; // magie, type, identifiant, numéro, secret (PKT_HELLO : 13, le secret vient après la version)
+   static final int _STATUS_BUSY = 3; // trop de jeux connectés au serveur (ou depuis notre adresse IP) : on réessaie
    // jeu -> serveur
    static final int _PKT_FIRST = 16;
    static final int _PKT_HELLO = 16;
@@ -48,6 +52,7 @@ class ModLobby {
    static final int _NET_UNREACHABLE = 3; // plus de réponse
    static final int _NET_BAD_PROTO = 4; // le serveur parle une autre version
    static final int _NET_FAILED = 5; // adresse introuvable, canal impossible à ouvrir
+   static final int _NET_FULL = 6; // le serveur est plein (ou trop de jeux depuis notre adresse IP) : nouvel essai toutes les 3 s
    // ce que le joueur demande au serveur
    static final int _WANT_NONE = 0;
    static final int _WANT_CREATE = 1;
@@ -138,6 +143,8 @@ class ModLobby {
    static int m_nNet = _NET_OFF;
    static SocketAddress m_cServer = null;
    static int m_nClientId = 0;
+   static int m_nSecret = 0; // secret de session donné par le serveur (0 : pas encore)
+   static boolean m_bServerFull = false; // le serveur a répondu « plein » : bonjour plus espacé
    static int m_nSeq = 0; // numéro du dernier paquet envoyé
    static int m_nSeqFloor = 0; // les réponses à des paquets plus anciens ne comptent plus
    static ByteBuffer m_cOut = ByteBuffer.allocate(1500); // PKT_MATCH_STATS : jusqu'à 1 300 octets environ
@@ -419,6 +426,9 @@ class ModLobby {
       if (m_nClientId == 0) {
          m_nClientId = 1;
       }
+
+      m_nSecret = 0;
+      m_bServerFull = false;
 
       LoadToken();
       FindLocalIp();
@@ -884,10 +894,19 @@ class ModLobby {
       b.put((byte)nType);
       b.putInt(m_nClientId);
       b.putInt(++m_nSeq);
+      if (nType != _PKT_HELLO) {
+         b.putInt(m_nSecret); // sans lui le serveur ne fait rien (il ne suffit pas de connaître notre identifiant)
+      }
+
       return b;
    }
 
    static void Send(ByteBuffer b) throws java.io.IOException {
+      // complété par des zéros : le serveur ne répond jamais plus gros que la demande (pas d'amplification)
+      while (b.position() < _MIN_SIZE) {
+         b.put((byte)0);
+      }
+
       b.flip();
       ModNet.m_cChannel.send(b, m_cServer);
    }
@@ -895,6 +914,7 @@ class ModLobby {
    private static void SendHello() throws java.io.IOException {
       ByteBuffer b = Begin(_PKT_HELLO);
       b.putShort((short)_LOBBY_PROTO);
+      b.putInt(m_nSecret); // si notre adresse a changé (box, 4G), il prouve que c'est bien nous
       b.putInt(ModNet._MOD_VERSION);
       ModNet.PutString(b, MyName());
       ModNet.PutString(b, m_sToken);
@@ -931,7 +951,7 @@ class ModLobby {
       }
 
       try {
-         ByteBuffer b = ByteBuffer.allocate(m_cOut.capacity() - 13);
+         ByteBuffer b = ByteBuffer.allocate(m_cOut.capacity() - _HEAD_SIZE);
          ModStats.PutMatchStats(b, SoccerModule.m_cMatch, m_nRepMatch);
          b.flip();
          m_tRepStats = new byte[b.remaining()];
@@ -1131,7 +1151,7 @@ class ModLobby {
 
       if (m_nNet != _NET_ONLINE || m_bHelloNeeded) {
          SendHello();
-         m_lNextSend = lNow + (m_nNet == _NET_BAD_PROTO ? 3000L : 500L);
+         m_lNextSend = lNow + (m_nNet == _NET_BAD_PROTO || m_bServerFull ? 3000L : 500L);
       } else if (m_nWant == _WANT_NONE) {
          if (m_bLeaveNeeded) {
             m_bLeaveNeeded = false;
@@ -1224,15 +1244,32 @@ class ModLobby {
       }
 
       if (nStatus == 2) {
-         // serveur relancé, ou silence trop long de notre part : il faut se présenter de nouveau
+         // serveur relancé, silence trop long de notre part, ou adresse changée : il faut se présenter de nouveau
+         // (avec notre secret : s'il nous connaît encore, il nous rend notre place)
          m_bHelloNeeded = true;
          m_lNextSend = 0L;
          return;
       }
 
+      if (nStatus == _STATUS_BUSY) {
+         if (!m_bServerFull) {
+            Log("serveur plein, nouvel essai dans 3 s");
+         }
+
+         m_bServerFull = true;
+         m_nNet = _NET_FULL;
+         return;
+      }
+
+      if (nStatus != 0) {
+         return; // état inconnu : la suite n'a sans doute pas le format attendu
+      }
+
       if (m_nNet != _NET_ONLINE) {
          Log("connecte au serveur");
       }
+
+      m_bServerFull = false;
 
       m_nNet = _NET_ONLINE;
       m_bHelloNeeded = false;
@@ -1254,6 +1291,7 @@ class ModLobby {
       long lPeerPublic = GetRawAddr(b);
       long lPeerLocal = GetRawAddr(b);
       int nQueueRange = b.getShort();
+      m_nSecret = b.getInt(); // il change quand notre adresse change
       // Mon compte et l'issue de mon dernier match classé : vrais quelle que soit la demande en cours
       m_nMyElo = nElo;
       m_nMyGames = nGames;

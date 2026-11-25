@@ -2,14 +2,21 @@
 
 Tout paquet commence par "PSN1" (4 octets) et un octet de type. Entiers en gros-boutiste, comme le
 ByteBuffer Java du jeu. Une chaîne = un octet de longueur puis un octet par caractère (cp1252 / Latin-1).
+
+Sécurité (dialogue 6) : le serveur donne à chaque jeu un secret de session (PKT_INFO) que le jeu remet dans tous ses
+paquets ; un paquet sans le bon secret, ou venu d'une autre adresse que celle du jeu, ne change rien. Le jeu complète
+ses paquets jusqu'à LOBBY_MIN_SIZE octets : le serveur ne répond jamais plus gros que la demande à une adresse qu'il
+n'a pas vérifiée (pas d'amplification par adresse usurpée).
 À tenir à jour avec mods/java/ModLobby.java.
 """
 import socket
 import struct
 
 MAGIC = 0x50534E31  # "PSN1"
-LOBBY_PROTO = 5  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne ; 5 : statistiques
-LOBBY_PROTOS = (3, 4, 5)  # versions acceptées : la 3 n'a pas la ligue, la 4 pas les statistiques, le reste est le même
+LOBBY_PROTO = 6  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne ; 5 : statistiques ;
+#                   6 : secret de session, paquets complétés à LOBBY_MIN_SIZE
+LOBBY_PROTOS = (6,)  # versions acceptées : les jeux d'avant le secret de session sont refusés (« pas la même version »)
+LOBBY_MIN_SIZE = 96  # taille minimale d'un paquet jeu -> serveur (le jeu complète par des zéros) ; plus court : ignoré
 
 # Paquets du match (ModNet) : le serveur les recopie tels quels vers l'autre joueur du salon
 PKT_INPUT = 1
@@ -17,9 +24,13 @@ PKT_SNAP = 2
 PKT_BYE = 3
 PKT_PUNCH = 4  # sonde de la liaison directe : va d'un jeu à l'autre, jamais par le serveur
 
-# Jeu -> serveur. Tous commencent par : identifiant du jeu (int), numéro du paquet (int).
-PKT_HELLO = 16  # + version du dialogue (short), version du mod (int), nom du joueur (chaîne), jeton du compte (chaîne),
-#                 adresse locale du jeu (4 octets) et son port (short non signé), à zéro s'il ne les connaît pas
+# Jeu -> serveur. Tous commencent par : identifiant du jeu (int), numéro du paquet (int), secret de session (int non
+# signé, donné par PKT_INFO) ; sauf PKT_HELLO, où le secret vient après la version du dialogue (elle reste au même
+# endroit pour toutes les versions : un vieux jeu est reconnu et refusé).
+PKT_HELLO = 16  # + version du dialogue (short), secret de session (int, 0 si le jeu n'en a pas), version du mod (int),
+#                 nom du joueur (chaîne), jeton du compte (chaîne), adresse locale du jeu (4 octets) et son port (short
+#                 non signé), à zéro s'il ne les connaît pas. Un jeu inconnu reçoit un secret. Un jeu connu dont l'adresse
+#                 a changé (box, 4G) doit donner son secret : il en reçoit un nouveau, à sa nouvelle adresse.
 PKT_CREATE = 17  # crée un salon
 PKT_JOIN = 18  # + code du salon (chaîne)
 PKT_LEAVE = 19  # quitte le salon ou la file d'attente
@@ -81,7 +92,8 @@ INFO_LEAGUE = 4  # PKT_INFO : le salon est un match de ligue en ligne (créé pa
 # PKT_INFO, état
 STATUS_OK = 0
 STATUS_BAD_PROTO = 1  # jeu et serveur ne parlent pas la même version
-STATUS_UNKNOWN = 2  # le serveur ne connaît pas ce jeu : il doit renvoyer PKT_HELLO
+STATUS_UNKNOWN = 2  # le serveur ne connaît pas ce jeu (ou pas ce secret, pas à cette adresse) : il doit renvoyer PKT_HELLO
+STATUS_BUSY = 3  # trop de jeux connectés (en tout, ou depuis cette adresse IP) : réessayer plus tard
 
 # PKT_INFO, rôle dans le salon
 ROLE_NONE = 0
@@ -119,12 +131,15 @@ HOW_MY_FORFEIT = 3  # mon forfait
 TOP_ROWS = 8  # lignes de classement dans un PKT_RANKS (MenuOnline._TOP_ROWS)
 
 _HEAD = struct.Struct(">IB")
-_LOBBY_HEAD = struct.Struct(">IBii")
+_HELLO_HEAD = struct.Struct(">IBii")  # PKT_HELLO : sans le secret
+_LOBBY_HEAD = struct.Struct(">IBiiI")  # les autres : avec le secret
 _INFO_TAIL = struct.Struct(">BBhhhhiBBh")
 # ... puis la liaison directe et la file d'attente : clé du salon (int), adresse (4 octets) et port (short non signé)
-# de l'autre joueur vus par le serveur, son adresse et son port locaux, écart d'Elo accepté dans la file (short)
+# de l'autre joueur vus par le serveur, son adresse et son port locaux, écart d'Elo accepté dans la file (short),
+# secret de session du jeu (int non signé)
 NO_ADDR = ("0.0.0.0", 0)
 HEAD_SIZE = _HEAD.size
+HELLO_HEAD_SIZE = _HELLO_HEAD.size
 LOBBY_HEAD_SIZE = _LOBBY_HEAD.size
 
 
@@ -152,11 +167,23 @@ def read_head(data):
 
 
 def read_lobby_head(data):
-    """Renvoie (identifiant du jeu, numéro du paquet) d'un paquet jeu -> serveur."""
+    """Renvoie (identifiant du jeu, numéro du paquet) d'un paquet jeu -> serveur (PKT_HELLO compris)."""
+    if len(data) < HELLO_HEAD_SIZE:
+        raise ValueError("paquet tronqué")
+    _, _, client_id, seq = _HELLO_HEAD.unpack_from(data, 0)
+    return client_id, seq
+
+
+def read_secret(data):
+    """Le secret de session d'un paquet jeu -> serveur autre que PKT_HELLO."""
     if len(data) < LOBBY_HEAD_SIZE:
         raise ValueError("paquet tronqué")
-    _, _, client_id, seq = _LOBBY_HEAD.unpack_from(data, 0)
-    return client_id, seq
+    return _LOBBY_HEAD.unpack_from(data, 0)[4]
+
+
+def pad(data):
+    """Complète un paquet jeu -> serveur jusqu'à LOBBY_MIN_SIZE octets (comme ModLobby.Send)."""
+    return data + bytes(max(0, LOBBY_MIN_SIZE - len(data)))
 
 
 def put_addr(addr):
@@ -175,15 +202,16 @@ def get_addr(data, off):
 
 
 def read_hello(data):
-    """Renvoie (version du dialogue, version du mod, nom, jeton, adresse locale). Un jeu d'une autre version
+    """Renvoie (version du dialogue, secret, version du mod, nom, jeton, adresse locale). Un jeu d'une autre version
     n'est lu que jusqu'à sa version : la suite peut avoir un autre format."""
-    proto, mod_version = struct.unpack_from(">hi", data, LOBBY_HEAD_SIZE)
+    (proto,) = struct.unpack_from(">h", data, HELLO_HEAD_SIZE)
     if proto not in LOBBY_PROTOS:
-        return proto, mod_version, "", "", NO_ADDR
-    name, off = get_string(data, LOBBY_HEAD_SIZE + 6)
+        return proto, 0, 0, "", "", NO_ADDR
+    secret, mod_version = struct.unpack_from(">Ii", data, HELLO_HEAD_SIZE + 2)
+    name, off = get_string(data, HELLO_HEAD_SIZE + 10)
     token, off = get_string(data, off)
     local, _ = get_addr(data, off)
-    return proto, mod_version, name, token, local
+    return proto, secret, mod_version, name, token, local
 
 
 def read_join(data):
@@ -321,14 +349,15 @@ def make_match_stats(match_id, teams, golden_goal=False, heat_size=(12, 8)):
 
 def make_info(seq, status, code="", role=ROLE_NONE, members=0, peer_name="", join_error=JOIN_OK, flags=0,
               elo=0, games=0, peer_elo=0, online=0, result=(0, RESULT_NONE, 0, 0),
-              key=0, peer_addr=NO_ADDR, peer_local=NO_ADDR, queue_range=0):
+              key=0, peer_addr=NO_ADDR, peer_local=NO_ADDR, queue_range=0, secret=0):
     """result = (numéro du match, issue RESULT_*, façon HOW_*, variation d'Elo).
-    key, peer_addr, peer_local : liaison directe (rooms.Lobby.link). queue_range : écart d'Elo accepté."""
+    key, peer_addr, peer_local : liaison directe (rooms.Lobby.link). queue_range : écart d'Elo accepté.
+    secret : secret de session du jeu (0 dans un refus)."""
     return (_HEAD.pack(MAGIC, PKT_INFO) + struct.pack(">iB", seq, status) + put_string(code)
             + bytes([role, members]) + put_string(peer_name)
             + _INFO_TAIL.pack(join_error, flags, elo, games, peer_elo, online, result[0], result[1], result[2], result[3])
             + struct.pack(">i", key) + put_addr(peer_addr) + put_addr(peer_local)
-            + struct.pack(">h", max(0, min(32767, int(queue_range)))))
+            + struct.pack(">hI", max(0, min(32767, int(queue_range))), secret))
 
 
 def make_peer(payload):
@@ -424,13 +453,13 @@ def make_league_info(seq, error, view=None):
 
 # --- côté jeu : sert aux tests (server/test_server.py) ---
 
-def make_lobby(ptype, client_id, seq, body=b""):
-    return _LOBBY_HEAD.pack(MAGIC, ptype, client_id, seq) + body
+def make_lobby(ptype, client_id, seq, body=b"", secret=0):
+    return pad(_LOBBY_HEAD.pack(MAGIC, ptype, client_id, seq, secret) + body)
 
 
-def make_hello(client_id, seq, name, mod_version, token="", proto=LOBBY_PROTO, local=NO_ADDR):
-    return make_lobby(PKT_HELLO, client_id, seq,
-                      struct.pack(">hi", proto, mod_version) + put_string(name) + put_string(token) + put_addr(local))
+def make_hello(client_id, seq, name, mod_version, token="", proto=LOBBY_PROTO, local=NO_ADDR, secret=0):
+    return pad(_HELLO_HEAD.pack(MAGIC, PKT_HELLO, client_id, seq) + struct.pack(">hIi", proto, secret, mod_version)
+               + put_string(name) + put_string(token) + put_addr(local))
 
 
 def make_match(match_id, phase, score_host, score_guest, flags=0):
@@ -447,8 +476,8 @@ def read_info(data):
     (key,) = struct.unpack_from(">i", data, off)
     peer_addr, off = get_addr(data, off + 4)
     peer_local, off = get_addr(data, off)
-    (queue_range,) = struct.unpack_from(">h", data, off)
-    return dict(key=key, peer_addr=peer_addr, peer_local=peer_local, queue_range=queue_range, seq=seq, status=status, code=code, role=role, members=members, peer_name=peer_name,
+    queue_range, secret = struct.unpack_from(">hI", data, off)
+    return dict(secret=secret, key=key, peer_addr=peer_addr, peer_local=peer_local, queue_range=queue_range, seq=seq, status=status, code=code, role=role, members=members, peer_name=peer_name,
                 join_error=join_error, queued=bool(flags & INFO_QUEUED), ranked=bool(flags & INFO_RANKED),
                 league=bool(flags & INFO_LEAGUE),
                 elo=elo, games=games, peer_elo=peer_elo, online=online,
@@ -469,7 +498,7 @@ def read_ranks(data):
 
 
 def make_league(client_id, seq, cmd, known=0, settings=None, animal=0, clothes=0, ratings=(), code="", key=0,
-                goals_host=0, goals_guest=0):
+                goals_host=0, goals_guest=0, secret=0):
     body = bytes([cmd]) + struct.pack(">i", known)
     if cmd == LG_CREATE:
         s = settings
@@ -485,7 +514,7 @@ def make_league(client_id, seq, cmd, known=0, settings=None, animal=0, clothes=0
         body += struct.pack(">iBB", key, goals_host, goals_guest)
     elif cmd == LG_PLAY:
         body += struct.pack(">i", key)
-    return make_lobby(PKT_LEAGUE, client_id, seq, body)
+    return make_lobby(PKT_LEAGUE, client_id, seq, body, secret)
 
 
 def read_league_info(data):

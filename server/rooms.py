@@ -12,6 +12,7 @@ match aillent d'un jeu à l'autre sans passer par lui. Il reste le relais de sec
 """
 import ipaddress
 import random
+import secrets
 import time
 
 import protocol as P
@@ -47,6 +48,7 @@ class Session:
         self.last_seen = now
         self.room = None
         self.token = ""
+        self.secret = 0  # secret de session donné au jeu (PKT_INFO), redit dans chacun de ses paquets
         self.player = None  # compte du joueur (store.Player), None sans jeton valable
         self.local_addr = P.NO_ADDR  # adresse du jeu sur son réseau local, annoncée par lui (liaison directe)
         self.last_queue = 0.0  # dernière demande de partie rapide
@@ -89,9 +91,12 @@ class Room:
 class Lobby:
     def __init__(self, fixed_code=None, timeout=30.0, stale=10.0, max_rooms=500, rng=None, store=None,
                  lost_after=4.0, claim_wait=6.0, takeover_after=3.0, queue_stale=3.0,
-                 queue_range=100.0, queue_grow=10.0, direct=True):
+                 queue_range=100.0, queue_grow=10.0, direct=True, max_sessions=5000, ip_sessions=16):
         self.sessions = {}  # identifiant du jeu -> Session
         self.by_addr = {}  # adresse -> Session
+        self.per_ip = {}  # adresse IP -> nombre de jeux connus venus d'elle
+        self.max_sessions = max_sessions  # jeux connus en même temps, en tout
+        self.ip_sessions = ip_sessions  # ... et depuis une même adresse IP (une box, une salle)
         self.by_player = {}  # numéro du compte -> sa dernière Session
         self.rooms = {}  # code -> Room
         self.queue = []  # joueurs qui attendent une partie rapide, le plus ancien d'abord
@@ -122,11 +127,18 @@ class Lobby:
         session = self.sessions.get(client_id)
         if session is None:
             session = Session(client_id, addr, name, mod_version, now)
+            session.secret = self.new_secret()
             self.sessions[client_id] = session
+            self.count_ip(addr[0], 1)
             self.log("bonjour %r, mod v%d%s" % (session, mod_version, ", compte %r" % player if player else ""))
             old = self.by_player.get(player.id) if player is not None else None
             if old is not None and old.client_id in self.sessions and now - old.last_seen >= self.takeover_after:
                 self.takeover(old, session)
+        elif session.addr != addr:
+            # adresse changée (le serveur n'est appelé ici qu'avec le bon secret) : un nouveau secret, que seule la
+            # nouvelle adresse reçoit. Qui usurpe une adresse ne voit pas la réponse et ne peut rien envoyer de plus.
+            session.secret = self.new_secret()
+            self.log("%r change d'adresse : %s:%d" % (session, addr[0], addr[1]))
         session.name = name
         session.mod_version = mod_version
         session.token = token
@@ -138,17 +150,51 @@ class Lobby:
         return session
 
     def touch(self, session, addr, now):
-        """Le joueur vient de parler. Son adresse peut changer en route (box, 4G) : on suit la dernière."""
+        """Le joueur vient de se présenter. Son adresse peut changer en route (box, 4G) : on suit la dernière.
+        Seul PKT_HELLO change l'adresse, et avec le secret de session (server.py)."""
         self.now = now
         session.last_seen = now
         if session.addr != addr:
             if self.by_addr.get(session.addr) is session:
                 del self.by_addr[session.addr]
+            self.count_ip(session.addr[0], -1)
+            self.count_ip(addr[0], 1)
             session.addr = addr
         self.by_addr[addr] = session
 
+    def seen(self, session, now):
+        """Un paquet du jeu, à son adresse et avec son secret."""
+        self.now = now
+        session.last_seen = now
+
+    # --- sécurité ---
+
+    @staticmethod
+    def new_secret():
+        return secrets.randbits(32) or 1
+
+    def count_ip(self, ip, delta):
+        n = self.per_ip.get(ip, 0) + delta
+        if n > 0:
+            self.per_ip[ip] = n
+        else:
+            self.per_ip.pop(ip, None)
+
+    def refuse(self, addr, now):
+        """Peut-on accepter un nouveau jeu à cette adresse ? Renvoie None (oui), P.STATUS_BUSY (trop de jeux connus),
+        ou True : un autre jeu parle encore depuis cette même adresse et ce même port. Il garderait sinon le relais
+        de ses paquets de match (by_addr) ; un jeu relancé qui retombe sur le même port attend que l'ancien se taise."""
+        if len(self.sessions) >= self.max_sessions or self.per_ip.get(addr[0], 0) >= self.ip_sessions:
+            return P.STATUS_BUSY
+        other = self.by_addr.get(addr)
+        if other is not None and now - other.last_seen < self.takeover_after:
+            return True
+        return None
+
     def forget(self, session):
-        self.sessions.pop(session.client_id, None)
+        if self.sessions.get(session.client_id) is session:
+            del self.sessions[session.client_id]
+            self.count_ip(session.addr[0], -1)
         if self.by_addr.get(session.addr) is session:
             del self.by_addr[session.addr]
         if session.player is not None and self.by_player.get(session.player.id) is session:

@@ -3,7 +3,7 @@
 // À augmenter à chaque nouveau paquet donné aux joueurs. _MOD_VERSION (ModNet) est autre chose : la version
 // du jeu en ligne, qui ne change que quand les paquets réseau ou les règles du match changent.
 public class ModVersion {
-   static final String RELEASE = "1.0";
+   static final String RELEASE = "1.1";
 
    static String GetText() {
       return "version " + RELEASE;

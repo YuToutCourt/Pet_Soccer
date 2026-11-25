@@ -88,14 +88,14 @@ par l'état du salon : une perte se rattrape au paquet suivant.
 
 | Paquet | Sens | Contenu |
 |---|---|---|
-| 16 `HELLO` | jeu → serveur | version du dialogue, version du mod, nom du profil, jeton du compte, adresse locale du jeu. Sert aussi à rester connu du serveur. |
+| 16 `HELLO` | jeu → serveur | version du dialogue, secret de session (0 au premier bonjour), version du mod, nom du profil, jeton du compte, adresse locale du jeu. Sert aussi à rester connu du serveur, et à revenir d'une autre adresse. |
 | 17 `CREATE`, 18 `JOIN` + code, 19 `LEAVE` | jeu → serveur | répétés jusqu'à ce que la réponse le confirme. `LEAVE` sort aussi de la file d'attente. |
 | 20 `STATE` | jeu → serveur | ce que le joueur montre à l'autre, 4 fois par seconde (1 fois pendant un match) |
 | 21 `QUEUE` | jeu → serveur | partie rapide : « j'attends un adversaire », répété 3 fois par seconde tant que le joueur attend |
 | 22 `MATCH` | jeu → serveur | tout match en ligne : numéro du match, phase (en cours, fini, abandon, adversaire perdu), score, « j'envoie des paquets de match ». Une fois par seconde. |
 | 25 `MATCH_STATS` | jeu → serveur | jeu de l'hôte, match fini : statistiques des deux équipes (format dans `protocol.read_match_stats`), redites avec `MATCH`. Pas de réponse. |
 | 23 `TOP` | jeu → serveur | demande le classement (toutes les 5 s devant l'écran « en ligne », hors salon) |
-| 32 `INFO` | serveur → jeu | réponse à chacun : code du salon, rôle, nombre de joueurs, nom de l'autre, refus d'entrée ; puis file d'attente, salon classé, Elo du joueur et de l'autre, joueurs connectés, issue du dernier match classé ; clé du salon et adresses de l'autre joueur (liaison directe) ; écart d'Elo accepté dans la file |
+| 32 `INFO` | serveur → jeu | réponse à chacun : code du salon, rôle, nombre de joueurs, nom de l'autre, refus d'entrée ; puis file d'attente, salon classé, Elo du joueur et de l'autre, joueurs connectés, issue du dernier match classé ; clé du salon et adresses de l'autre joueur (liaison directe) ; écart d'Elo accepté dans la file ; secret de session |
 | 33 `PEER` | serveur → jeu | le `STATE` de l'autre joueur, recopié tel quel |
 | 34 `RANKS` | serveur → jeu | les 8 premiers du classement (nom, Elo, victoires, nuls, défaites), le rang du joueur, le nombre de classés |
 | 1, 2, 3 | les deux sens | paquets du match (`ModNet`), recopiés tels quels |
@@ -103,16 +103,33 @@ par l'état du salon : une perte se rattrape au paquet suivant.
 
 - Tous les paquets jeu → serveur portent l'identifiant du jeu (tiré à l'ouverture de l'écran) et un numéro. `INFO`
   rend ce numéro : après un changement d'avis (créer, rejoindre, quitter), les réponses plus anciennes sont ignorées.
+- **Secret de session** (dialogue 6) : au premier `HELLO`, le serveur tire un secret et le donne dans `INFO`. Le jeu
+  le met dans tous ses paquets (en-tête de 17 octets ; dans `HELLO`, juste après la version du dialogue, qui reste
+  à l'octet 13 pour reconnaître un vieux jeu). Un paquet sans le bon secret, ou venu d'une autre adresse que celle
+  du jeu, ne change rien et reçoit « jeu inconnu » : connaître l'identifiant d'un autre jeu ne permet plus de le
+  sortir de son salon ni de détourner ses paquets de match. Si l'adresse du jeu change (box, 4G), il reçoit
+  « jeu inconnu », redit `HELLO` avec son secret, garde sa place et reçoit un nouveau secret à sa nouvelle adresse.
+  Un `HELLO` sans le bon secret pour un jeu connu n'a de réponse que depuis l'adresse de ce jeu (réponse perdue).
+  Le secret passe en clair : il protège des inconnus, pas de quelqu'un qui écoute le même réseau.
+- **Pas d'amplification** : le jeu complète ses paquets par des zéros jusqu'à 96 octets (`protocol.LOBBY_MIN_SIZE`,
+  `ModLobby._MIN_SIZE`) ; le serveur ignore les plus courts. À une adresse qu'il n'a pas vérifiée (sans le secret),
+  il ne répond jamais plus gros que la demande (`Server.reply`). Classement et ligue ne partent qu'à l'adresse du jeu.
+- **Limites** (`server.py`) : `--ip-rate` paquets de salon par seconde et par adresse IP (60, le double d'un coup),
+  `--ip-hello` nouveaux jeux et lectures de compte dans la base par seconde et par IP (2, vingt d'un coup),
+  `--ip-sessions` jeux connus depuis une même IP (16), `--max-sessions` en tout (5000). Au-delà des deux derniers,
+  `INFO` dit « serveur plein » (état 3) et le jeu réessaie toutes les 3 s. Les paquets écartés sont comptés dans le
+  journal toutes les 10 s. Les tests (`test_server.py`) lèvent ces limites, sauf ceux qui les essaient.
 - `STATE` : prêt, équipe, tenue, composition (une ligne au format de `tactics.dat`) ; et pour l'hôte : stade, durée,
   numéro du match en cours (0 = il est dans le salon), équipes et tenues retenues pour ce match.
 - **Départ** : l'hôte tire un numéro de match, l'envoie, puis charge le stade. L'invité qui voit un numéro de match
   qu'il n'a pas encore joué charge le même match. Les réglages viennent tous de l'hôte.
-- **Version** : `ModNet._MOD_VERSION` (8 depuis les statistiques en ligne ; 7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
+- **Version** : `ModNet._MOD_VERSION` (9 depuis le secret de session ; 8 depuis les statistiques en ligne ; 7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
   et la file d'attente ne réunit que des joueurs de même version. À augmenter dès que les paquets ou les règles du
   match changent.
 - **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5, 4 depuis la
-  ligue en ligne, `notes/online-league.md`, 5 depuis `MATCH_STATS`). Le serveur accepte les versions de
-  `protocol.LOBBY_PROTOS` (3 à 5) ; un jeu d'une autre version voit « Le serveur n'a pas la même version ».
+  ligue en ligne, `notes/online-league.md`, 5 depuis `MATCH_STATS`, 6 depuis le secret de session). Le serveur
+  accepte les versions de `protocol.LOBBY_PROTOS` (6 seulement : un jeu sans secret de session laisserait la
+  faille ouverte) ; un jeu d'une autre version voit « Le serveur n'a pas la même version ».
 - Même équipe et même tenue des deux côtés : l'invité prend la tenue suivante.
 - Le serveur ne lit pas les paquets du match. Il relaie `STATE` tel quel et en garde une copie lue
   (`protocol.read_state`) : équipes, tenues, stade et tactique du match qu'il enregistre. `ModLobby.SendState` et
@@ -434,6 +451,9 @@ Tout match en ligne (partie classée, ligue entre amis, salon privé) est enregi
   (ballon, joueur…). L'hôte marque son état « caméra libre » (bit 2 de l'octet du ralenti) quand la sienne suit
   sa cible sans ralenti, fin de mi-temps, pause ni super tir. Sinon le client copie la caméra de l'hôte
   (`SoccerCamera.OnPostUpdate` → `ModNet.ClientCamera`), pour garder les mêmes plans.
+  Le début de match lance aussi chez le client `SetEndHalfCamera` (plan d'intro), que seul
+  `AIMatch.ActionAfterStabilization` efface, et le client ne la joue pas : `ModNet` appelle donc
+  `ClearEndHalfCamera` quand la caméra repasse en locale (sinon plan qui flotte tout seul, retard de 4 s).
 - Touches : la manette de l'équipe de gauche (réglages du joueur 1) capte les touches et les envoie au lieu de
   les jouer (`ModNet.OnLocalKey`). Clavier seulement pour l'instant. Les touches directes vers un joueur (2 à 7,
   `ModSwitch`) partent avant ce crochet, en actions `_ACT_SEL + k` (11..16) jouées par `ModNet.HostApplyKey`.

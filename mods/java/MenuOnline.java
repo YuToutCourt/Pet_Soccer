@@ -196,6 +196,8 @@ public class MenuOnline extends SoccerUserInterface {
             return T("OnlineNetUnreachable");
          case ModLobby._NET_BAD_PROTO:
             return T("OnlineNetBadProto");
+         case ModLobby._NET_FULL:
+            return T("OnlineNetFull");
          case ModLobby._NET_FAILED:
          case ModLobby._NET_OFF:
             return T("OnlineNetFailed");

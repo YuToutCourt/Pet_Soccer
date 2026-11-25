@@ -16,8 +16,9 @@ class ModNet {
    static final int _MAGIC = 0x50534E31; // "PSN1"
    // Version du mod pour le jeu en ligne : à augmenter dès que les paquets ou les règles du match changent.
    // Le serveur ne met dans un même salon que deux jeux de même version.
-   static final int _MOD_VERSION = 8; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
-   // 8 : statistiques des matchs en ligne (PKT_MATCH_STATS), matchs des salons privés enregistrés par le serveur
+   static final int _MOD_VERSION = 9; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
+   // 8 : statistiques des matchs en ligne (PKT_MATCH_STATS), matchs des salons privés enregistrés par le serveur ;
+   // 9 : secret de session avec le serveur (dialogue 6)
    static final int _ROLE_NONE = 0;
    static final int _ROLE_HOST = 1;
    static final int _ROLE_CLIENT = 2;
@@ -2380,6 +2381,12 @@ class ModNet {
       if (bCamFree != m_bCamFree) {
          m_bCamFree = bCamFree;
          Log("client : camera " + (bCamFree ? "locale" : "de l'hote"));
+         if (bCamFree) {
+            // Le début de match lance aussi chez le client le plan d'intro (SetEndHalfCamera), que seul
+            // AIMatch.ActionAfterStabilization efface, et le client ne la joue pas : sans ça, sa caméra
+            // locale garde le décalage et le retard de 4 s de la fin de mi-temps (plan qui flotte tout seul)
+            cModule.GetSoccerCamera().ClearEndHalfCamera();
+         }
       }
       m_bCamReady = true;
       // Score, horloge et état du match : ceux de l'état le plus récent
@@ -2639,6 +2646,10 @@ class ModNet {
    // la fin de mi-temps et les pauses ; en jeu, elle suit la même cible mais avec les réglages du client.
    // Renvoie vrai si la caméra a été placée ici.
    static boolean ClientCamera(SoccerCamera cCam) {
+      if (m_nRole == _ROLE_CLIENT && m_bPuppets && m_bCamReady && m_bCamFree && cCam.m_bEndHalf) {
+         cCam.ClearEndHalfCamera(); // plan de fin de mi-temps relancé chez le client : pas en caméra locale
+      }
+
       if (m_nRole != _ROLE_CLIENT || !m_bPuppets || !m_bCamReady || m_bCamFree) {
          return false;
       }

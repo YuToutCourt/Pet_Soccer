@@ -32,13 +32,41 @@ import time
 import protocol as P
 from rooms import Lobby
 from leagues import Leagues
-from store import DatabaseError, Store, clean_name
+from store import DatabaseError, Store, clean_name, valid_token
+
+
+class RateLimit:
+    """Seau à jetons par adresse IP : `rate` paquets par seconde, `burst` d'un coup. Table de taille fixe (les
+    adresses se partagent des cases par leur empreinte) : des millions d'adresses usurpées ne la font pas grossir.
+    rate <= 0 : pas de limite."""
+    SLOTS = 1 << 16
+
+    def __init__(self, rate, burst):
+        self.rate = rate
+        self.burst = burst
+        self.tokens = [float(burst)] * self.SLOTS
+        self.stamp = [0.0] * self.SLOTS
+
+    def allow(self, ip, now):
+        if self.rate <= 0:
+            return True
+        i = hash(ip) & (self.SLOTS - 1)  # hash() des chaînes change à chaque lancement : collisions impossibles à viser
+        tokens = min(self.burst, self.tokens[i] + (now - self.stamp[i]) * self.rate)
+        self.stamp[i] = now
+        if tokens < 1.0:
+            self.tokens[i] = tokens
+            return False
+        self.tokens[i] = tokens - 1.0
+        return True
 
 
 class Server:
-    def __init__(self, sock, lobby, lag=0.0, jitter=0.0, loss=0.0, verbose=False):
+    def __init__(self, sock, lobby, lag=0.0, jitter=0.0, loss=0.0, verbose=False, ip_rate=60.0, ip_hello=2.0):
         self.sock = sock
         self.lobby = lobby
+        self.packets = RateLimit(ip_rate, ip_rate * 2)  # paquets de salon par adresse IP
+        self.hellos = RateLimit(ip_hello, ip_hello * 10)  # nouveaux jeux et lectures du compte dans la base, par IP
+        self.refused = 0  # paquets écartés par les limites (journal)
         self.lag = lag  # secondes ajoutées à chaque paquet relayé
         self.jitter = jitter
         self.loss = loss  # part des paquets relayés perdus, 0..1
@@ -70,6 +98,12 @@ class Server:
         else:
             heapq.heappush(self.delayed, (now + delay, next(self.order), data, addr))
 
+    def reply(self, request, data, addr):
+        """Réponse à une adresse que le serveur n'a pas vérifiée : jamais plus grosse que la demande, sinon une
+        adresse usurpée ferait du serveur un amplificateur contre elle."""
+        if len(data) <= len(request):
+            self.send(data, addr)
+
     def flush(self, now):
         while self.delayed and self.delayed[0][0] <= now:
             _, _, data, addr = heapq.heappop(self.delayed)
@@ -82,7 +116,7 @@ class Server:
         own = dict(join_error=join_error, flags=P.INFO_QUEUED if queued else 0,
                    elo=player.elo if player else 0, games=player.games if player else 0,
                    online=len(self.lobby.sessions), result=session.result,
-                   queue_range=self.lobby.accepted_gap(session, self.lobby.now) if queued else 0)
+                   queue_range=self.lobby.accepted_gap(session, self.lobby.now) if queued else 0, secret=session.secret)
         if room is None:
             return P.make_info(seq, P.STATUS_OK, **own)
         peer = room.peer(session)
@@ -104,15 +138,50 @@ class Server:
         rows = [(i + 1, p.name, p.elo, p.wins, p.draws, p.losses) for i, p in enumerate(store.top(P.TOP_ROWS))]
         return P.make_ranks(store.rank(session.player) if session.player else 0, store.total(), rows)
 
-    def login(self, client_id, name, token, mod_version):
-        """Le compte du joueur qui se présente. Lu dans la base une fois par jeu, pas à chaque bonjour."""
+    def known_login(self, session, name, token):
+        """Vrai si le compte de ce jeu est déjà connu : pas besoin de la base. Elle n'est lue qu'une fois par jeu."""
+        return (self.lobby.store is None or not valid_token(token)
+                or session is not None and session.player is not None and session.token == token and session.player.name == name)
+
+    def login(self, session, name, token, mod_version):
+        """Le compte du joueur qui se présente (créé à son premier passage)."""
         store = self.lobby.store
         if store is None:
             return None
-        known = self.lobby.sessions.get(client_id)
-        if known is not None and known.player is not None and known.token == token and known.player.name == name:
-            return known.player
+        if session is not None and session.player is not None and session.token == token and session.player.name == name:
+            return session.player
         return store.login(token, name, mod_version)
+
+    def hello(self, data, addr, now, client_id, seq):
+        """PKT_HELLO : un jeu se présente, reste connu du serveur, ou revient d'une autre adresse avec son secret."""
+        lobby = self.lobby
+        proto, secret, mod_version, name, token, local_addr = P.read_hello(data)
+        if proto not in P.LOBBY_PROTOS:
+            self.reply(data, P.make_info(seq, P.STATUS_BAD_PROTO), addr)
+            return
+        if len(data) < P.LOBBY_MIN_SIZE:
+            return  # le jeu complète son bonjour : ainsi la réponse n'est jamais plus grosse (pas d'amplification)
+        session = lobby.sessions.get(client_id)
+        if session is not None and secret != session.secret:
+            # Sans le bon secret, on ne touche à rien. Depuis l'adresse du jeu, c'est sans doute qu'il n'a pas reçu
+            # la réponse qui le portait : on la redit (à cette adresse seulement, qui est déjà vérifiée).
+            if session.addr == addr:
+                self.send(self.info(session, seq), addr)
+            return
+        if session is None:
+            refused = lobby.refuse(addr, now)
+            if refused is not None:
+                if refused == P.STATUS_BUSY:
+                    self.reply(data, P.make_info(seq, P.STATUS_BUSY), addr)
+                return
+        name = clean_name(name)
+        if (session is None or not self.known_login(session, name, token)) and not self.hellos.allow(addr[0], now):
+            # nouveaux jeux et écritures dans la base : à petite dose par adresse IP (le jeu redit son bonjour)
+            self.refused += 1
+            return
+        player = self.login(session, name, token, mod_version)
+        session = lobby.hello(client_id, addr, name, mod_version, now, player, token, local_addr)
+        self.send(self.info(session, seq), addr)
 
     def handle(self, data, addr, now):
         ptype = P.read_head(data)
@@ -138,25 +207,24 @@ class Server:
         if ptype not in (P.PKT_HELLO, P.PKT_CREATE, P.PKT_JOIN, P.PKT_LEAVE, P.PKT_STATE, P.PKT_QUEUE, P.PKT_MATCH,
                          P.PKT_TOP, P.PKT_LEAGUE, P.PKT_MATCH_STATS):
             return
+        if not self.packets.allow(addr[0], now):
+            self.refused += 1
+            return
         client_id, seq = P.read_lobby_head(data)
 
         if ptype == P.PKT_HELLO:
-            proto, mod_version, name, token, local_addr = P.read_hello(data)
-            if proto not in P.LOBBY_PROTOS:
-                self.send(P.make_info(seq, P.STATUS_BAD_PROTO), addr)
-                return
-            name = clean_name(name)
-            session = lobby.hello(client_id, addr, name, mod_version, now, self.login(client_id, name, token, mod_version), token,
-                                  local_addr)
-            self.send(self.info(session, seq), addr)
+            self.hello(data, addr, now, client_id, seq)
             return
 
+        if len(data) < P.LOBBY_MIN_SIZE:
+            return  # pas un jeu du dialogue 6 (il complète ses paquets) : une réponse serait plus grosse que la demande
         session = lobby.sessions.get(client_id)
-        if session is None:
-            # Serveur relancé, ou joueur oublié après un long silence : il doit se présenter de nouveau
-            self.send(P.make_info(seq, P.STATUS_UNKNOWN), addr)
+        if session is None or session.addr != addr or P.read_secret(data) != session.secret:
+            # Serveur relancé, joueur oublié après un long silence, ou jeu qui a changé d'adresse : il doit se
+            # présenter de nouveau (avec son secret). Un paquet usurpé reçoit la même réponse et ne change rien.
+            self.reply(data, P.make_info(seq, P.STATUS_UNKNOWN), addr)
             return
-        lobby.touch(session, addr, now)
+        lobby.seen(session, now)
 
         if ptype == P.PKT_LEAGUE:
             self.league(session, seq, data, now)
@@ -240,6 +308,9 @@ class Server:
                         self.log("paquet illisible de %s:%d : %s" % (addr[0], addr[1], e))
                 except DatabaseError as e:
                     self.log("ERREUR base (paquet %d de %s:%d) : %s" % (data[4] if len(data) > 4 else -1, addr[0], addr[1], e))
+                except Exception as e:
+                    # un paquet imprévu ne doit pas arrêter le serveur (et déconnecter tout le monde)
+                    self.log("ERREUR paquet %d de %s:%d : %r" % (data[4] if len(data) > 4 else -1, addr[0], addr[1], e))
             self.flush(now)
 
             try:
@@ -253,9 +324,14 @@ class Server:
                     self.write_status()
             except DatabaseError as e:
                 self.log("ERREUR base : %s" % e)
-            if self.verbose and now >= next_stats:
+            except Exception as e:
+                self.log("ERREUR : %r" % e)
+            if now >= next_stats:
                 next_stats = now + 10.0
-                if self.stats["recv"]:
+                if self.refused:
+                    self.log("limites : %d paquets écartés en 10 s" % self.refused)
+                    self.refused = 0
+                if self.verbose and self.stats["recv"]:
                     self.log("10 s : %d paquets reçus, %d relayés (%d perdus exprès), %d joueurs, %d salons, %d en attente" % (
                         self.stats["recv"], self.stats["relayed"], self.stats["lost"],
                         len(self.lobby.sessions), len(self.lobby.rooms), len(self.lobby.queue)))
@@ -307,6 +383,13 @@ def main():
     ap.add_argument("--league-minute", type=float, default=60, help="secondes que dure une minute de délai d'une journée de ligue (tests)")
     ap.add_argument("--league-grace", type=float, default=20, help="minutes pendant lesquelles un match de ligue contre l'IA en cours échappe au délai")
     ap.add_argument("--no-direct", action="store_true", help="tout le match passe par le serveur : pas de liaison directe entre les jeux")
+    ap.add_argument("--max-sessions", type=int, default=5000, help="jeux connus en même temps, en tout")
+    ap.add_argument("--ip-sessions", type=int, default=16, help="jeux connus en même temps depuis une même adresse IP")
+    ap.add_argument("--ip-rate", type=float, default=60,
+                    help="paquets de salon par seconde et par adresse IP (le double d'un coup) ; 0 : sans limite")
+    ap.add_argument("--ip-hello", type=float, default=2,
+                    help="nouveaux jeux (et lectures de compte dans la base) par seconde et par adresse IP (dix fois plus"
+                         " d'un coup) ; 0 : sans limite")
     ap.add_argument("-v", "--verbose", action="store_true", help="statistiques toutes les 10 s, paquets illisibles")
     args = ap.parse_args()
     if not args.db:
@@ -318,11 +401,13 @@ def main():
                   lost_after=args.lost, claim_wait=args.claim, takeover_after=args.takeover,
                   queue_range=args.queue_range, queue_grow=args.queue_grow,
                   # un retard ou des pertes simulés ne touchent que les paquets relayés : pas de liaison directe alors
-                  direct=not (args.no_direct or args.lag or args.jitter or args.loss))
+                  direct=not (args.no_direct or args.lag or args.jitter or args.loss),
+                  max_sessions=args.max_sessions, ip_sessions=args.ip_sessions)
     lobby.leagues = Leagues(store.db, fixed_code=args.league_code.strip().upper() if args.league_code else None,
                             delay_scale=args.league_minute, grace=args.league_grace * 60)
     sock = open_socket(args.host, args.port)
-    server = Server(sock, lobby, args.lag / 1000.0, args.jitter / 1000.0, args.loss / 100.0, args.verbose)
+    server = Server(sock, lobby, args.lag / 1000.0, args.jitter / 1000.0, args.loss / 100.0, args.verbose,
+                    ip_rate=args.ip_rate, ip_hello=args.ip_hello)
     extras = []
     if not lobby.direct:
         extras.append("sans liaison directe")

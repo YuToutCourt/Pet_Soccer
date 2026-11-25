@@ -38,6 +38,7 @@ class Game:
         self.mod_version = mod_version
         self.token = token or "jeton%027d" % client_id  # le compte du joueur
         self.seq = 0
+        self.secret = 0  # secret de session, donné par le serveur
         self.new_socket()
 
     def new_socket(self):
@@ -57,16 +58,20 @@ class Game:
                 return data
         return None
 
-    @staticmethod
-    def info(data):
-        """PKT_INFO décodé. Un refus (autre version, jeu inconnu) n'a que son état."""
+    def info(self, data):
+        """PKT_INFO décodé (le secret de session qu'il porte est gardé). Un refus (autre version, jeu inconnu) n'a
+        que son état."""
         status = data[P.HEAD_SIZE + 4]
-        return P.read_info(data) if status == P.STATUS_OK else dict(seq=struct.unpack_from(">i", data, P.HEAD_SIZE)[0], status=status)
+        if status != P.STATUS_OK:
+            return dict(seq=struct.unpack_from(">i", data, P.HEAD_SIZE)[0], status=status, size=len(data))
+        info = P.read_info(data)
+        self.secret = info["secret"]
+        return info
 
     def ask(self, ptype, body=b""):
         """Envoie un paquet de salon et renvoie la réponse du serveur (PKT_INFO décodé)."""
         self.seq += 1
-        self.sock.sendto(P.make_lobby(ptype, self.client_id, self.seq, body), self.server)
+        self.sock.sendto(P.make_lobby(ptype, self.client_id, self.seq, body, self.secret), self.server)
         while True:
             data = self.recv(P.PKT_INFO)
             if data is None:
@@ -77,8 +82,8 @@ class Game:
 
     def hello(self, proto=P.LOBBY_PROTO):
         self.seq += 1
-        self.sock.sendto(P.make_hello(self.client_id, self.seq, self.name, self.mod_version, self.token, proto, self.local),
-                         self.server)
+        self.sock.sendto(P.make_hello(self.client_id, self.seq, self.name, self.mod_version, self.token, proto, self.local,
+                                      self.secret), self.server)
         data = self.recv(P.PKT_INFO)
         return self.info(data) if data else None
 
@@ -88,7 +93,7 @@ class Game:
 
     def top(self):
         self.seq += 1
-        self.sock.sendto(P.make_lobby(P.PKT_TOP, self.client_id, self.seq), self.server)
+        self.sock.sendto(P.make_lobby(P.PKT_TOP, self.client_id, self.seq, secret=self.secret), self.server)
         data = self.recv(P.PKT_RANKS)
         return P.read_ranks(data) if data else None
 
@@ -98,7 +103,7 @@ class Game:
     def league(self, cmd, known=0, **kw):
         """Commande de ligue (PKT_LEAGUE) ; renvoie la réponse décodée (PKT_LEAGUE_INFO)."""
         self.seq += 1
-        self.sock.sendto(P.make_league(self.client_id, self.seq, cmd, known, **kw), self.server)
+        self.sock.sendto(P.make_league(self.client_id, self.seq, cmd, known, secret=self.secret, **kw), self.server)
         while True:
             data = self.recv(P.PKT_LEAGUE_INFO)
             if data is None:
@@ -128,8 +133,9 @@ def free_port():
 
 
 def start_server(port, *args):
+    # tous les faux jeux viennent de 127.0.0.1 : sans limites par adresse IP, sauf pour les tests qui les essaient
     proc = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py"), "--host", "127.0.0.1", "--port", str(port),
-                             "--db", DB_URL]
+                             "--db", DB_URL, "--ip-rate", "0", "--ip-hello", "0", "--ip-sessions", "1000"]
                             + list(args), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     probe = Game(port, 999, "sonde", token="x")  # jeton refusé : la sonde n'a pas de compte
     for _ in range(30):
@@ -148,8 +154,13 @@ def test_rooms(port):
     check("un jeu inconnu doit d'abord se présenter", info and info["status"] == P.STATUS_UNKNOWN)
     info = a.hello(proto=P.LOBBY_PROTO + 1)
     check("version du dialogue différente : refusé", info and info["status"] == P.STATUS_BAD_PROTO)
-    info = Game(port, 5, "Ancien").hello(proto=3)
-    check("un jeu d'avant la ligue en ligne (dialogue 3) est accepté", info and info["status"] == P.STATUS_OK)
+    old5 = Game(port, 5, "Ancien")
+    hello5 = (struct.pack(">IBiihi", P.MAGIC, P.PKT_HELLO, 5, 1, 5, 8) + P.put_string("Ancien") + P.put_string(old5.token)
+              + bytes(6))  # bonjour d'un jeu du dialogue 5 : sans secret, pas complété
+    old5.sock.sendto(hello5, old5.server)
+    data = old5.recv(P.PKT_INFO)
+    check("un jeu d'avant le secret de session (dialogue 5) : « pas la même version », réponse pas plus grosse",
+          data is not None and old5.info(data)["status"] == P.STATUS_BAD_PROTO and len(data) <= len(hello5))
     info = a.hello()
     check("bonjour accepté, pas encore de salon", info and info["status"] == P.STATUS_OK and info["code"] == "")
     for g in (b, c, old):
@@ -182,10 +193,10 @@ def test_rooms(port):
     check("salon plein refusé", c.ask(P.PKT_JOIN, P.put_string(code))["join_error"] == P.JOIN_FULL)
 
     data = b.recv(P.PKT_PEER)
-    check("l'état de l'hôte arrive chez l'invité", data is not None and data[P.HEAD_SIZE:] == b"etat de A")
+    check("l'état de l'hôte arrive chez l'invité", data is not None and data[P.HEAD_SIZE:].startswith(b"etat de A"))
     b.ask(P.PKT_STATE, b"etat de B")
     data = a.recv(P.PKT_PEER)
-    check("l'état de l'invité arrive chez l'hôte", data is not None and data[P.HEAD_SIZE:] == b"etat de B")
+    check("l'état de l'invité arrive chez l'hôte", data is not None and data[P.HEAD_SIZE:].startswith(b"etat de B"))
 
     a.match(P.PKT_SNAP, b"x" * 500)
     data = b.recv(P.PKT_SNAP)
@@ -197,6 +208,12 @@ def test_rooms(port):
     check("un joueur hors du salon n'est pas relayé", a.recv(P.PKT_INPUT) is None)
 
     b.new_socket()  # la box de l'invité change son port de sortie
+    old_secret = b.secret
+    info = b.ask(P.PKT_STATE, b"etat de B")
+    check("nouvelle adresse : le jeu doit se présenter de nouveau", info["status"] == P.STATUS_UNKNOWN)
+    info = b.hello()
+    check("... avec son secret : il garde sa place et reçoit un nouveau secret",
+          info["status"] == P.STATUS_OK and info["code"] == code and b.secret not in (0, old_secret))
     b.ask(P.PKT_STATE, b"etat de B")
     a.recv(P.PKT_PEER)
     a.match(P.PKT_SNAP, b"apres")
@@ -493,8 +510,8 @@ def team_stats(shots, goals, slot_roles=True):
 def send_stats(game, match_id, teams, golden=False):
     t = teams
     game.seq += 1
-    game.sock.sendto(P.make_lobby(P.PKT_MATCH_STATS, game.client_id, game.seq, P.make_match_stats(match_id, t, golden)),
-                     game.server)
+    game.sock.sendto(P.make_lobby(P.PKT_MATCH_STATS, game.client_id, game.seq, P.make_match_stats(match_id, t, golden),
+                                  game.secret), game.server)
 
 
 def db_one(sql, params=()):
@@ -906,6 +923,96 @@ def test_link_scope():
     check("--no-direct : aucune adresse donnée", la == lb == (0, P.NO_ADDR, P.NO_ADDR))
 
 
+# ------------------------------------------------------------------ sécurité : secret de session, amplification, limites
+
+def test_security(port):
+    a, b = Game(port, 201, "Alice"), Game(port, 202, "Bob")
+    a.hello()
+    b.hello()
+    check("chaque jeu reçoit son secret de session", a.secret != 0 and b.secret != 0 and a.secret != b.secret)
+    code = a.ask(P.PKT_CREATE)["code"]
+    b.ask(P.PKT_JOIN, P.put_string(code))
+    a.ask(P.PKT_STATE, b"")
+
+    pirate = Game(port, 202, "Pirate")  # connaît l'identifiant du jeu de Bob, pas son secret
+    info = pirate.ask(P.PKT_LEAVE)
+    check("l'identifiant d'un autre jeu sans son secret : « jeu inconnu »", info and info["status"] == P.STATUS_UNKNOWN)
+    check("... et Bob est toujours dans le salon", b.ask(P.PKT_STATE, b"")["members"] == 2)
+    pirate.secret = b.secret
+    info = pirate.ask(P.PKT_LEAVE)
+    check("le bon secret depuis une autre adresse : refusé aussi",
+          info["status"] == P.STATUS_UNKNOWN and b.ask(P.PKT_STATE, b"")["members"] == 2)
+    pirate.secret = 0
+    check("bonjour avec l'identifiant de Bob sans son secret : pas de réponse", pirate.hello() is None)
+    pirate.secret = 12345
+    check("... ni avec un faux secret", pirate.hello() is None)
+    info = b.ask(P.PKT_STATE, b"")
+    check("Bob garde son adresse, son secret et son salon", info["status"] == P.STATUS_OK and info["members"] == 2)
+    a.match(P.PKT_SNAP, b"pour Bob")
+    check("les paquets du match vont toujours chez Bob", b.recv(P.PKT_SNAP) is not None)
+    check("... jamais chez le pirate", pirate.recv(P.PKT_SNAP) is None)
+
+    # Bob n'a pas reçu la réponse à son premier bonjour : il le redit sans secret, depuis la même adresse
+    secret = b.secret
+    b.secret = 0
+    info = b.hello()
+    check("bonjour redit sans secret depuis l'adresse du jeu : le même secret est redonné",
+          info["status"] == P.STATUS_OK and b.secret == secret and info["code"] == code)
+
+    # Amplification : des paquets courts (adresse usurpée) n'ont pas de réponse, les autres jamais plus grosse
+    top = struct.pack(">IBiiI", P.MAGIC, P.PKT_TOP, 202, 1, b.secret)
+    pirate.sock.sendto(top, pirate.server)
+    check("paquet pas complété à %d octets : ignoré" % P.LOBBY_MIN_SIZE, pirate.recv(P.PKT_INFO) is None)
+    hello = P.make_hello(301, 1, "Court", MOD_VERSION, "jeton%027d" % 301)[:40]
+    pirate.sock.sendto(hello, pirate.server)
+    check("bonjour pas complété : ignoré", pirate.recv(P.PKT_INFO) is None and pirate.recv(P.PKT_RANKS) is None)
+    pirate.sock.sendto(P.pad(top), pirate.server)
+    data = pirate.recv(P.PKT_INFO)
+    check("le classement ne part qu'à l'adresse du jeu ; ailleurs, une réponse pas plus grosse que la demande",
+          data is not None and len(data) <= P.LOBBY_MIN_SIZE and pirate.recv(P.PKT_RANKS) is None)
+    biggest = P.make_info(2 ** 31 - 1, P.STATUS_OK, "ABCD", P.ROLE_GUEST, 2, "N" * store.NAME_MAX, flags=7, elo=3000,
+                          games=9999, peer_elo=3000, online=9999, key=1, peer_addr=("1.2.3.4", 5), peer_local=("1.2.3.4", 5),
+                          queue_range=9999, secret=2 ** 32 - 1)
+    check("la plus grosse réponse à un bonjour (%d octets) tient dans un bonjour complété" % len(biggest),
+          len(biggest) <= P.LOBBY_MIN_SIZE)
+
+
+def test_limits(port):
+    """Serveur lancé avec --ip-sessions 4 --ip-rate 20 --ip-hello 1 ; la sonde de start_server compte pour un jeu."""
+    g = Game(port, 401, "Alice")
+    g.hello()
+    for _ in range(200):
+        g.seq += 1
+        g.sock.sendto(P.make_lobby(P.PKT_TOP, g.client_id, g.seq, secret=g.secret), g.server)
+    got = 0
+    while g.recv(P.PKT_RANKS) is not None:
+        got += 1
+    check("200 paquets d'un coup depuis une adresse IP : %d servis (20 par seconde, 40 d'un coup)" % got, 20 <= got <= 60)
+    time.sleep(2.5)
+
+    games = [Game(port, 410 + i, "J%d" % i) for i in range(15)]
+    for x in games:
+        x.seq += 1
+        x.sock.sendto(P.make_hello(x.client_id, x.seq, x.name, MOD_VERSION, x.token), x.server)
+    replies = [x.recv(P.PKT_INFO) for x in games]
+    infos = [games[i].info(d) for i, d in enumerate(replies) if d is not None]
+    ok = sum(1 for i in infos if i["status"] == P.STATUS_OK)
+    busy = sum(1 for i in infos if i["status"] == P.STATUS_BUSY)
+    check("15 nouveaux jeux d'un coup depuis une adresse IP : 2 acceptés (4 au plus avec la sonde et Alice), %d « serveur plein »"
+          % busy, ok == 2 and busy >= 5)
+    check("le refus n'est jamais plus gros que la demande", all(len(d) <= P.LOBBY_MIN_SIZE for d in replies if d))
+
+
+def test_hello_rate(port):
+    """Serveur lancé avec --ip-hello 1 : un nouveau jeu par seconde et par adresse IP, dix d'un coup."""
+    games = [Game(port, 500 + i, "J%d" % i) for i in range(20)]
+    for x in games:
+        x.seq += 1
+        x.sock.sendto(P.make_hello(x.client_id, x.seq, x.name, MOD_VERSION, x.token), x.server)
+    ok = sum(1 for x in games if x.recv(P.PKT_INFO) is not None)
+    check("20 nouveaux comptes d'un coup depuis une adresse IP : %d acceptés (la base n'est pas inondée)" % ok, 7 <= ok <= 12)
+
+
 print("--- lecture des paquets")
 test_parse()
 print("--- file d'attente par Elo")
@@ -924,7 +1031,10 @@ for name, test, args in (("salons", test_rooms, []), ("silence", test_timeout, [
                          ("comptes gardés", test_persist, []),
                          ("salon privé enregistré", test_private, []),
                          ("ligue en ligne", test_league, LEAGUE_ARGS),
-                         ("ligue gardée", test_league_persist, LEAGUE_ARGS)):
+                         ("ligue gardée", test_league_persist, LEAGUE_ARGS),
+                         ("sécurité : secret de session, amplification", test_security, []),
+                         ("sécurité : jeux par adresse IP, débit", test_limits, ["--ip-sessions", "4", "--ip-rate", "20"]),
+                         ("sécurité : nouveaux comptes par adresse IP", test_hello_rate, ["--ip-hello", "1"])):
     print("--- " + name)
     port = free_port()
     server = start_server(port, *args)
