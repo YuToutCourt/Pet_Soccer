@@ -138,6 +138,12 @@ public class MenuTactics extends SoccerUserInterface {
       if (this.IsInGame() && ModNet.IsClient()) {
          ModLobby.SetMyTactics(this.m_cComp); // [mod] en ligne : c'est l'hôte qui l'applique à l'équipe de l'invité
       } else if (this.IsInGame() && SoccerModule.m_cMatch != null) {
+         if (ModNet.IsHost()) {
+            // [mod] en ligne : le serveur enregistre la tactique du dernier PKT_STATE ; sans ça il garderait celle du
+            // coup d'envoi alors que les places (ModStats) sont celles de la nouvelle, et les rôles du site seraient faux
+            ModLobby.SetMyTactics(this.m_cComp);
+         }
+
          ModTactics.ApplyTeams(SoccerModule.m_cMatch);
       }
    }
