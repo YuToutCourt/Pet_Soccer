@@ -1,6 +1,8 @@
 // [mod] Écran « en ligne » (ModLobby), voir notes/online.md. Deux états :
 // - hors salon : état du serveur, « créer » un salon ou « rejoindre » celui dont on tape le code, « partie rapide »
 //   (file d'attente d'une partie classée), « ligue » (MenuOnlineLeague), et le classement de l'Elo en ligne à droite ;
+//   « regarder » montre à droite les parties classées et matchs de ligue en cours : on en choisit un avec les flèches
+//   de la ligne « match », et « regarder » (en bas) le charge en spectateur ;
 // - dans un salon : les deux joueurs et leur équipe, « équipe », « tactique », « prêt » (invité) ou « jouer » (hôte),
 //   stade et durée choisis par l'hôte. En partie classée les deux joueurs se mettent prêts et le match part seul.
 // L'état vient du réseau : l'écran se relit 5 fois par seconde (Tick). Écran généré par mods/ui/make_online_scr.py.
@@ -17,6 +19,11 @@ public class MenuOnline extends SoccerUserInterface {
    UIButton m_cAction2 = null;
    UIButton m_cAction3 = null; // « ligue » hors salon, caché dans un salon
    boolean m_bAction3Shown = true;
+   UIButton m_cAction4 = null; // « regarder » / « classement » hors salon, à la place de la ligne « durée »
+   UIStatic m_cStadiumLabel = null;
+   UIWindow[] m_tTimeRow = new UIWindow[4]; // ligne « durée », cachée hors salon
+   boolean m_bTimeRowShown = true;
+   String m_sLiveSel = null; // code du match choisi dans la liste des matchs en cours
    UIStatic m_cStadium = null;
    UIStatic m_cTime = null;
    UIStatic m_cVs = null;
@@ -49,6 +56,13 @@ public class MenuOnline extends SoccerUserInterface {
       this.m_cAction2 = (UIButton)this.GetElem("ID_ACTION2");
       this.m_cAction3 = (UIButton)this.GetElem("ID_ACTION3");
       this.m_bAction3Shown = true;
+      this.m_cAction4 = (UIButton)this.GetElem("ID_ACTION4");
+      this.m_cStadiumLabel = (UIStatic)this.GetElem("ID_STADIUM_LABEL");
+      this.m_tTimeRow[0] = this.GetElem("ID_TIME_LABEL");
+      this.m_tTimeRow[1] = this.GetElem("ID_TIME_PREV");
+      this.m_tTimeRow[2] = this.GetElem("ID_TIME_VALUE");
+      this.m_tTimeRow[3] = this.GetElem("ID_TIME_NEXT");
+      this.m_bTimeRowShown = true;
       this.m_cStadium = (UIStatic)this.GetElem("ID_STADIUM_VALUE");
       this.m_cTime = (UIStatic)this.GetElem("ID_TIME_VALUE");
       this.m_cVs = (UIStatic)this.GetElem("ID_VS");
@@ -125,7 +139,7 @@ public class MenuOnline extends SoccerUserInterface {
       }
 
       ModLobby.AutoMenuFrame();
-      if (ModLobby.GuestCheckStart()) {
+      if (ModLobby.GuestCheckStart() || ModLobby.SpectatorCheckStart()) {
          return; // le match se charge
       }
 
@@ -231,7 +245,8 @@ public class MenuOnline extends SoccerUserInterface {
          this.m_cCode.SetDisabled(bRoom);
       }
 
-      this.Set(this.m_cFrameMatch, T(bRoom ? "OnlineFrameMatch" : "OnlineFrameTop"));
+      boolean bLive = !bRoom && ModLobby.m_bLiveView;
+      this.Set(this.m_cFrameMatch, T(bRoom ? "OnlineFrameMatch" : (bLive ? "OnlineFrameLive" : "OnlineFrameTop")));
       if (this.m_cAction3 != null && this.m_bAction3Shown == bRoom) {
          this.m_bAction3Shown = !bRoom;
          if (bRoom) {
@@ -241,7 +256,35 @@ public class MenuOnline extends SoccerUserInterface {
          }
       }
 
-      this.RefreshTop(!bRoom);
+      // hors salon, « regarder » prend la place de la ligne « durée »
+      if (this.m_bTimeRowShown != bRoom) {
+         this.m_bTimeRowShown = bRoom;
+
+         for (int i = 0; i < this.m_tTimeRow.length; i++) {
+            if (this.m_tTimeRow[i] != null) {
+               if (bRoom) {
+                  this.m_tTimeRow[i].Show();
+               } else {
+                  this.m_tTimeRow[i].Hide();
+               }
+            }
+         }
+
+         if (this.m_cAction4 != null) {
+            if (bRoom) {
+               this.m_cAction4.Hide();
+            } else {
+               this.m_cAction4.Show();
+            }
+         }
+      }
+
+      this.Set(this.m_cStadiumLabel, T(bLive ? "OnlineLiveMatch" : "OnlineStadium"));
+      if (bLive) {
+         this.RefreshLive();
+      } else {
+         this.RefreshTop(!bRoom);
+      }
       if (!bRoom) {
          this.RefreshLobby(bOnline);
       } else {
@@ -306,10 +349,15 @@ public class MenuOnline extends SoccerUserInterface {
       this.SetDisabled(this.m_cAction2, !bOnline || bBusy);
       this.Set(this.m_cAction3, T("OnlineLeague"));
       this.SetDisabled(this.m_cAction3, bBusy);
-      this.Set(this.m_cOk, T("OnlineQuick"));
-      this.SetDisabled(this.m_cOk, !bOnline || bBusy);
-      this.Set(this.m_cBack, T(bQueue ? "OnlineCancel" : "MenuBack"));
-      this.Set(this.m_cStadium, "-");
+      boolean bLive = ModLobby.m_bLiveView;
+      boolean bWatch = ModLobby.IsWatching();
+      this.Set(this.m_cAction4, T(bLive ? "OnlineRanking" : "OnlineWatch"));
+      this.SetDisabled(this.m_cAction4, bBusy);
+      this.Set(this.m_cOk, T(bLive ? "OnlineWatch" : "OnlineQuick"));
+      this.SetDisabled(this.m_cOk, !bOnline || bBusy || bLive && this.LiveIndex() < 0);
+      this.Set(this.m_cBack, T(bQueue || bWatch ? "OnlineCancel" : "MenuBack"));
+      int nSel = this.LiveIndex();
+      this.Set(this.m_cStadium, bLive && nSel >= 0 ? nSel + 1 + " / " + ModLobby.m_nLiveCount : "-");
       this.Set(this.m_cTime, "-");
       this.SetLogo(0, this.m_cLogo1, -1);
       this.SetLogo(1, this.m_cLogo2, -1);
@@ -327,6 +375,9 @@ public class MenuOnline extends SoccerUserInterface {
          sError = T("OnlineCreating");
       } else if (ModLobby.m_nWant == ModLobby._WANT_JOIN) {
          sError = T("OnlineJoining");
+      } else if (bWatch) {
+         // « Match de yu contre bob : chargement » une fois le serveur d'accord
+         sError = ModLobby.m_bWatching ? T("OnlineWatchMatch") + ModLobby.m_sWatchHost + T("OnlineWatchVs") + ModLobby.m_sWatchGuest + T("OnlineWatchLoading") : T("OnlineWatchJoining");
       } else if (bQueue) {
          sError = T("OnlineSearching");
          // l'écart d'Elo accepté par le serveur grandit avec l'attente : « Adversaire cherché : Elo 900 à 1100 »
@@ -351,11 +402,17 @@ public class MenuOnline extends SoccerUserInterface {
                break;
             case ModLobby._OUT_NO_ROOM:
                sError = T("OnlineErrNoRoom");
+               break;
+            case ModLobby._OUT_WATCH_GONE:
+               sError = T("OnlineWatchGone");
+               break;
+            case ModLobby._OUT_WATCH_FULL:
+               sError = T("OnlineWatchFull");
          }
       }
 
-      this.SetMsg(0, T("OnlineHelp1"), 0.85F, 0.85F, 0.85F);
-      this.SetMsg(1, T("OnlineHelp2"), 0.85F, 0.85F, 0.85F);
+      this.SetMsg(0, T(bLive ? "OnlineLiveHelp1" : "OnlineHelp1"), 0.85F, 0.85F, 0.85F);
+      this.SetMsg(1, T(bLive ? "OnlineLiveHelp2" : "OnlineHelp2"), 0.85F, 0.85F, 0.85F);
       if (bBusy && !this.m_bBadCode) {
          this.SetMsg(2, sError, 0.85F, 0.85F, 0.85F);
       } else if (sError.length() == 0 && ModLobby.ResultText().length() > 0) {
@@ -363,6 +420,86 @@ public class MenuOnline extends SoccerUserInterface {
       } else {
          this.SetMsg(2, sError, 1.0F, 0.45F, 0.45F);
       }
+   }
+
+   // Matchs en cours, à la place du classement : « yu - bob » à gauche, « 2-1   1012 Elo » (ou « ligue ») à droite.
+   // Le match choisi est en jaune.
+   void RefreshLive() {
+      boolean bKnown = ModLobby.m_bLiveKnown && ModLobby.m_nNet == ModLobby._NET_ONLINE;
+      int nSel = this.LiveIndex();
+
+      for (int i = 0; i < _TOP_ROWS; i++) {
+         String sName = "";
+         String sInfo = "";
+         if (bKnown && i < ModLobby.m_nLiveCount) {
+            int[] t = ModLobby.m_tLiveInfo[i];
+            sName = ModLobby.m_tLiveHost[i] + " - " + ModLobby.m_tLiveGuest[i];
+            sInfo = t[4] + "-" + t[5] + "   " + ((t[7] & 1) != 0 ? T("OnlineLeagueTag") : (t[0] + t[1]) / 2 + " Elo");
+            float fG = i == nSel ? 0.82F : 1.0F;
+            float fB = i == nSel ? 0.25F : 1.0F;
+
+            for (int k = 0; k < 2; k++) {
+               if (this.m_tTop[i][k] != null) {
+                  this.m_tTop[i][k].SetTextColor(1.0F, fG, fB);
+               }
+            }
+         } else if (bKnown && i == 0) {
+            sName = T("OnlineLiveEmpty");
+            if (this.m_tTop[i][0] != null) {
+               this.m_tTop[i][0].SetTextColor(0.85F, 0.85F, 0.85F);
+            }
+         }
+
+         this.Set(this.m_tTop[i][0], sName);
+         this.Set(this.m_tTop[i][1], sInfo);
+      }
+
+      // sous la liste : les équipes du match choisi et ses spectateurs
+      String sSel = "";
+      if (bKnown && nSel >= 0) {
+         int[] t = ModLobby.m_tLiveInfo[nSel];
+         sSel = TeamName(t[2]) + " - " + TeamName(t[3]) + (t[6] > 0 ? ", " + t[6] + T(t[6] > 1 ? "OnlineSpecN" : "OnlineSpec1") : "");
+         if (this.m_cTopMe != null) {
+            this.m_cTopMe.SetTextColor(1.0F, 0.82F, 0.25F);
+         }
+      }
+
+      this.Set(this.m_cTopMe, sSel);
+   }
+
+   // Place du match choisi dans la liste, -1 si la liste est vide. Le choix suit son code quand la liste change.
+   int LiveIndex() {
+      if (!ModLobby.m_bLiveKnown || ModLobby.m_nLiveCount == 0) {
+         return -1;
+      }
+
+      for (int i = 0; i < ModLobby.m_nLiveCount; i++) {
+         if (ModLobby.m_tLiveCode[i].equals(this.m_sLiveSel)) {
+            return i;
+         }
+      }
+
+      this.m_sLiveSel = ModLobby.m_tLiveCode[0];
+      return 0;
+   }
+
+   void NextLive(int nDelta) {
+      int nSel = this.LiveIndex();
+      if (nSel < 0) {
+         return;
+      }
+
+      int nCount = ModLobby.m_nLiveCount;
+      this.m_sLiveSel = ModLobby.m_tLiveCode[((nSel + nDelta) % nCount + nCount) % nCount];
+   }
+
+   // « regarder » / « classement » : le cadre de droite change de contenu (les lignes sont recolorées par chacun)
+   void ToggleLive() {
+      ModLobby.m_bLiveView = !ModLobby.m_bLiveView;
+      ModLobby.m_lNextLive = 0L;
+      ModLobby.m_lNextTop = 0L;
+      this.m_tShown.clear(); // couleurs et textes à refaire
+      this.Refresh();
    }
 
    // Dernière ligne de message : « Victoire 2-1 : +24 Elo », en vert, rouge ou gris
@@ -426,7 +563,10 @@ public class MenuOnline extends SoccerUserInterface {
       this.SetDisabled(this.m_cAction1, bLocked);
       this.SetDisabled(this.m_cAction2, bLocked);
       this.Set(this.m_cBack, T("OnlineLeave"));
-      this.SetMsg(0, bRanked ? T("OnlineRankedRoom") : T("OnlineRoomCode") + ModLobby.m_sRoom, 1.0F, 0.82F, 0.25F);
+      // « Partie classée, 2 spectateurs » : l'hôte voit qui regarde (le serveur ne le dit qu'à lui)
+      int nSpec = bHost ? ModLobby.m_nSpectators : 0;
+      String sSpec = nSpec > 0 ? ", " + nSpec + T(nSpec > 1 ? "OnlineSpecN" : "OnlineSpec1") : "";
+      this.SetMsg(0, (bRanked ? T("OnlineRankedRoom") : T("OnlineRoomCode") + ModLobby.m_sRoom) + sSpec, 1.0F, 0.82F, 0.25F);
       boolean bHostBusy = !bHost && bPeer && ModLobby.m_bPeerState && ModLobby.m_nPeerMatchId != 0;
       if (bRanked) {
          this.Set(this.m_cOk, T(ModLobby.m_bReady ? "OnlineNotReady" : "OnlineReady"));
@@ -506,7 +646,15 @@ public class MenuOnline extends SoccerUserInterface {
    }
 
    void OnOK() {
-      if (!ModLobby.InRoom()) {
+      if (!ModLobby.InRoom() && ModLobby.m_bLiveView) {
+         int nSel = this.LiveIndex();
+         if (nSel >= 0 && ModLobby.m_nWant == ModLobby._WANT_NONE) {
+            this.m_bBadCode = false;
+            ModLobby.Watch(ModLobby.m_tLiveCode[nSel]); // le match se charge quand l'état de l'hôte arrive (Tick)
+         }
+
+         this.Refresh();
+      } else if (!ModLobby.InRoom()) {
          this.m_bBadCode = false;
          ModLobby.Queue(); // partie rapide
          this.Refresh();
@@ -519,8 +667,8 @@ public class MenuOnline extends SoccerUserInterface {
    }
 
    void OnBack() {
-      if (ModLobby.InRoom() || ModLobby.m_nWant == ModLobby._WANT_QUEUE) {
-         ModLobby.Leave(); // quitte le salon, ou la file d'attente
+      if (ModLobby.InRoom() || ModLobby.m_nWant == ModLobby._WANT_QUEUE || ModLobby.IsWatching()) {
+         ModLobby.Leave(); // quitte le salon, la file d'attente, ou le match qu'on allait regarder
          this.Refresh();
       } else {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(0); // MenuMain.Show ferme la liaison au serveur
@@ -558,6 +706,11 @@ public class MenuOnline extends SoccerUserInterface {
          this.OnAction2();
       } else if (sId.equals("ID_ACTION3") && !ModLobby.InRoom() && ModLobby.m_nWant == ModLobby._WANT_NONE) {
          ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE_LEAGUE);
+      } else if (sId.equals("ID_ACTION4") && !ModLobby.InRoom() && ModLobby.m_nWant == ModLobby._WANT_NONE) {
+         this.ToggleLive();
+      } else if (sId.startsWith("ID_STADIUM_") && nDelta != 0 && !ModLobby.InRoom()) {
+         this.NextLive(nDelta); // hors salon, la ligne « stade » choisit le match à regarder
+         this.Refresh();
       } else if (sId.startsWith("ID_STADIUM_") && nDelta != 0) {
          ModLobby.NextLevel(nDelta);
          this.Refresh();

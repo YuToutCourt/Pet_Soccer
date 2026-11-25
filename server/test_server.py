@@ -758,6 +758,9 @@ def test_league(port):
                   and ih["role"] == P.ROLE_HOST and ig["role"] == P.ROLE_GUEST)
             gh, gg = (3, 1) if key < 10000 else (2, 1)
             play(host, guest, 7000 + rounds)
+            if not met:
+                check("match de ligue entre joueurs : dans la liste des matchs à regarder",
+                      [(r["code"], r["league"]) for r in live(host)] == [(ih["code"], True)])
             host.report(7000 + rounds, P.MATCH_FINISHED, gh, gg)
             info = guest.report(7000 + rounds, P.MATCH_FINISHED, gh, gg)
             check("le match compte pour l'Elo en ligne", info["result"]["outcome"] == P.RESULT_RATED and info["elo"] != 1000)
@@ -1013,8 +1016,122 @@ def test_hello_rate(port):
     check("20 nouveaux comptes d'un coup depuis une adresse IP : %d acceptés (la base n'est pas inondée)" % ok, 7 <= ok <= 12)
 
 
+# ------------------------------------------------------------------ spectateurs
+
+def live(game):
+    """La liste des matchs qu'on peut regarder (PKT_LIVE)."""
+    game.seq += 1
+    game.sock.sendto(P.make_lobby(P.PKT_LIVE, game.client_id, game.seq, secret=game.secret), game.server)
+    data = game.recv(P.PKT_LIVE_LIST)
+    return P.read_live_list(data) if data else None
+
+
+def spectate(game, code, ready=0):
+    return game.ask(P.PKT_SPECTATE, P.make_spectate(code, ready))
+
+
+def test_spectators(port):
+    """Serveur lancé avec --max-spectators 2."""
+    host, guest = pair(port, 701, 702, "Hugo", "Gina")
+    s1, s2, s3 = Game(port, 703, "Sam"), Game(port, 704, "Sid"), Game(port, 705, "Sue")
+    old = Game(port, 706, "Vieux", mod_version=MOD_VERSION - 1)
+    friend, friend2 = Game(port, 707, "Ami"), Game(port, 708, "Ami2")
+    for x in (s1, s2, s3, old, friend, friend2):
+        x.hello()
+    code = host.ask(P.PKT_STATE, b"")["code"]
+
+    check("partie classée pas encore commencée : absente de la liste", live(s1) == [])
+    play(host, guest, 1)
+    host.ask(P.PKT_STATE, P.make_state(host=True, animal=7, level=3, half=60, match_id=1, teams=(7, 0, 12, 1)))
+    host.report(1, P.MATCH_PLAYING, 2, 1)
+    rows = live(s1)
+    check("match classé en cours : dans la liste, avec noms, équipes et score",
+          len(rows) == 1 and rows[0]["code"] == code and rows[0]["host"] == host.name and rows[0]["guest"] == guest.name
+          and rows[0]["host_animal"] == 7 and rows[0]["guest_animal"] == 12
+          and (rows[0]["score_host"], rows[0]["score_guest"]) == (2, 1) and not rows[0]["league"])
+
+    # salon privé entre amis : ni dans la liste, ni regardable avec son code
+    private = friend.ask(P.PKT_CREATE)["code"]
+    friend2.ask(P.PKT_JOIN, P.put_string(private))
+    play(friend, friend2, 1)
+    check("salon privé en match : absent de la liste", [r["code"] for r in live(s1)] == [code])
+    check("salon privé : on ne le regarde pas, même avec son code",
+          spectate(s1, private)["join_error"] == P.JOIN_UNKNOWN and s1.ask(P.PKT_STATE, b"")["role"] == P.ROLE_NONE)
+    check("code inconnu : refusé", spectate(s1, "ZZZZ")["join_error"] == P.JOIN_UNKNOWN)
+    check("un joueur ne regarde pas son propre match", spectate(guest, code)["join_error"] == P.JOIN_UNKNOWN
+          and guest.ask(P.PKT_STATE, b"")["role"] == P.ROLE_GUEST)
+    check("autre version du mod : refusé", spectate(old, code)["join_error"] == P.JOIN_VERSION)
+
+    info = spectate(s1, code)
+    check("spectateur : rôle, code, noms de l'hôte et de l'invité",
+          info["join_error"] == P.JOIN_OK and info["role"] == P.ROLE_SPECTATOR and info["code"] == code
+          and info["peer_name"] == host.name and info["peer2_name"] == guest.name and info["spectators"] == 1)
+    info = host.ask(P.PKT_STATE, P.make_state(host=True, animal=7, match_id=1, teams=(7, 0, 12, 1)))
+    check("l'hôte voit un spectateur et une arrivée", info["spectators"] == 1 and info["spectator_joins"] == 1)
+    peer = s1.recv(P.PKT_PEER)
+    check("le spectateur reçoit l'état de salon de l'hôte (match à charger)",
+          peer is not None and P.read_state(peer[P.HEAD_SIZE:])["match_id"] == 1)
+    spectate(s1, code)
+    check("demande redite : pas une nouvelle arrivée", host.ask(P.PKT_STATE, b"")["spectator_joins"] == 1)
+    spectate(s1, code, ready=1)
+    spectate(s1, code, ready=1)
+    check("stade chargé chez le spectateur : l'hôte le voit une fois (il le remettra à niveau)",
+          host.ask(P.PKT_STATE, b"")["spectator_joins"] == 2)
+
+    host.match(P.PKT_SPEC_SNAP, b"copie 1")
+    data = s1.recv(P.PKT_SPEC_SNAP)
+    check("copie de l'hôte distribuée au spectateur", data is not None and data.endswith(b"copie 1"))
+    guest.match(P.PKT_SPEC_SNAP, b"fausse copie")
+    check("une copie venue de l'invité n'est pas distribuée", s1.recv(P.PKT_SPEC_SNAP) is None)
+    s1.match(P.PKT_SNAP, b"intrus")
+    check("un spectateur n'envoie rien aux joueurs", host.recv(P.PKT_SNAP) is None and guest.recv(P.PKT_SNAP) is None)
+    check("le joueur ne reçoit pas la copie des spectateurs", guest.recv(P.PKT_SPEC_SNAP) is None)
+
+    spectate(s2, code)
+    check("places de spectateurs prises : refusé", spectate(s3, code)["join_error"] == P.JOIN_FULL)
+    host.match(P.PKT_SPEC_SNAP, b"copie 2")
+    check("une copie de l'hôte va à chaque spectateur",
+          s1.recv(P.PKT_SPEC_SNAP) is not None and s2.recv(P.PKT_SPEC_SNAP) is not None)
+    rows = live(s3)
+    check("la liste compte les spectateurs", rows[0]["spectators"] == 2)
+    info = s1.ask(P.PKT_LEAVE)
+    check("le spectateur arrête de regarder", info["role"] == P.ROLE_NONE and info["code"] == "")
+    check("l'hôte voit un spectateur de moins", host.ask(P.PKT_STATE, b"")["spectators"] == 1)
+    check("une place libérée sert au suivant", spectate(s3, code)["role"] == P.ROLE_SPECTATOR)
+    check("un spectateur qui entre dans la file d'attente ne regarde plus",
+          s3.ask(P.PKT_QUEUE)["role"] == P.ROLE_NONE and host.ask(P.PKT_STATE, b"")["spectators"] == 1)
+    s3.ask(P.PKT_LEAVE)
+
+    host.report(1, P.MATCH_FINISHED, 2, 1)
+    guest.report(1, P.MATCH_FINISHED, 2, 1)
+    check("match fini : plus dans la liste", live(s1) == [])
+    check("salon toujours ouvert : le spectateur reste jusqu'au match suivant",
+          s2.ask(P.PKT_STATE, b"")["role"] == P.ROLE_SPECTATOR)
+    guest.ask(P.PKT_LEAVE)
+    check("salon classé fermé : le spectateur n'a plus de rôle", s2.ask(P.PKT_STATE, b"")["role"] == P.ROLE_NONE)
+
+
+def test_spectator_silence():
+    """Lobby seul : un spectateur oublié après un silence libère sa place."""
+    lobby = quiet_lobby()
+    host, guest, spec = fake_session(lobby, 1, 1000), fake_session(lobby, 2, 1000), fake_session(lobby, 3, 1000)
+    lobby.enqueue(host, 0.0)
+    lobby.enqueue(guest, 0.0)
+    room = host.room
+    check("salon classé créé par la file", room is not None and room.ranked and guest.room is room)
+    check("spectateur entré", lobby.spectate(spec, room.code) == P.JOIN_OK and room.spectators == [spec])
+    lobby.drop(spec, "silence")
+    check("spectateur oublié : sa place est libre", room.spectators == [] and spec.watching is None)
+    spec2 = fake_session(lobby, 4, 1000)
+    lobby.spectate(spec2, room.code)
+    lobby.leave(host, "quitte")
+    check("salon fermé par l'hôte : spectateur libéré", spec2.watching is None and room.code not in lobby.rooms)
+
+
 print("--- lecture des paquets")
 test_parse()
+print("--- spectateurs : silence")
+test_spectator_silence()
 print("--- file d'attente par Elo")
 test_queue_elo()
 print("--- liaison directe : adresses")
@@ -1030,6 +1147,7 @@ for name, test, args in (("salons", test_rooms, []), ("silence", test_timeout, [
                          ("classé : jeu relancé", test_takeover, ["--takeover", "1"]),
                          ("comptes gardés", test_persist, []),
                          ("salon privé enregistré", test_private, []),
+                         ("spectateurs", test_spectators, ["--max-spectators", "2"]),
                          ("ligue en ligne", test_league, LEAGUE_ARGS),
                          ("ligue gardée", test_league_persist, LEAGUE_ARGS),
                          ("sécurité : secret de session, amplification", test_security, []),

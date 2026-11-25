@@ -58,6 +58,8 @@ class Session:
         self.result = (0, P.RESULT_NONE, 0, 0)  # issue de son dernier match classé (voir protocol.make_info)
         self.state = None  # dernier PKT_STATE lu (protocol.read_state) : équipe, tactique...
         self.match_state = None  # dernier PKT_STATE qui portait un numéro de match
+        self.watching = None  # salon dont ce jeu regarde le match (spectateur) ; il n'est alors dans aucun salon
+        self.watch_ready = 0  # numéro du match dont le stade est chargé chez ce spectateur
 
     def __repr__(self):
         return "%s (%s:%d)" % (self.name, self.addr[0], self.addr[1])
@@ -80,6 +82,12 @@ class Room:
         self.decided = set()  # numéros des matchs déjà comptés ou annulés
         self.league = None  # (numéro de la ligue, clé du match) : salon ouvert pour un match de ligue entre deux joueurs
         self.started_at = None  # heure réelle du début du match en cours (enregistrée avec le match)
+        self.spectators = []  # jeux qui regardent ce salon (partie classée ou ligue seulement)
+        self.spectator_joins = 0  # arrivées de spectateurs : l'hôte voit ce compteur changer et les remet à niveau
+
+    def watchable(self):
+        """On ne regarde que les parties classées et les matchs de ligue, pas les salons privés entre amis."""
+        return self.ranked or self.league is not None
 
     def members(self):
         return 2 if self.guest else 1
@@ -91,7 +99,7 @@ class Room:
 class Lobby:
     def __init__(self, fixed_code=None, timeout=30.0, stale=10.0, max_rooms=500, rng=None, store=None,
                  lost_after=4.0, claim_wait=6.0, takeover_after=3.0, queue_stale=3.0,
-                 queue_range=100.0, queue_grow=10.0, direct=True, max_sessions=5000, ip_sessions=16):
+                 queue_range=100.0, queue_grow=10.0, direct=True, max_sessions=5000, ip_sessions=16, max_spectators=8):
         self.sessions = {}  # identifiant du jeu -> Session
         self.by_addr = {}  # adresse -> Session
         self.per_ip = {}  # adresse IP -> nombre de jeux connus venus d'elle
@@ -113,6 +121,7 @@ class Lobby:
         self.queue_range = queue_range  # écart d'Elo accepté en entrant dans la file d'attente
         self.queue_grow = queue_grow  # points d'Elo ajoutés à cet écart par seconde d'attente, sans limite
         self.direct = direct  # donner aux joueurs d'un salon l'adresse de l'autre (liaison directe)
+        self.max_spectators = max_spectators  # spectateurs par salon (chacun coûte au serveur ~16 Ko/s pendant le match)
         self.leagues = None  # leagues.Leagues : ligues en ligne
         self.clock = time.time  # heure réelle, pour la base
         self.pending_stats = {}  # (identifiant du jeu de l'hôte, n° du match) -> statistiques arrivées avant la fin
@@ -221,6 +230,7 @@ class Lobby:
             self.log("salon %s : %r reprend sa place" % (room.code, new))
         if old in self.queue:
             self.queue.remove(old)
+        self.unwatch(old)
         new.result = old.result
         new.last_match = old.last_match
         self.forget(old)
@@ -311,6 +321,7 @@ class Lobby:
         if session in self.queue:
             self.queue.remove(session)
             self.log("file d'attente : %r sort (%s)" % (session, why))
+        self.unwatch(session)
         room = session.room
         if room is None:
             return
@@ -320,6 +331,9 @@ class Lobby:
             for other in (room.host, room.guest):
                 if other is not None:
                     other.room = None
+            for spectator in room.spectators:
+                spectator.watching = None  # leur jeu voit le rôle disparaître de PKT_INFO et revient à la liste
+            room.spectators = []
             del self.rooms[room.code]
             self.log("salon %s fermé (%s), %d paquets de match relayés" % (room.code, why, room.relayed))
         else:
@@ -330,6 +344,63 @@ class Lobby:
         """L'autre joueur du salon, ou None."""
         return session.room.peer(session) if session.room else None
 
+    # --- spectateurs ---
+
+    def spectate(self, session, code, ready=0):
+        """PKT_SPECTATE : le jeu regarde le match d'un salon classé ou de ligue. Renvoie un code P.JOIN_*.
+        Redit par le jeu tant qu'il regarde. ready : match dont le stade est chargé chez lui ; quand il change,
+        l'hôte (compteur d'arrivées) lui renvoie ce qui dure dans le match (côtés, animations, lettres des supers)."""
+        code = code.strip().upper()
+        room = self.rooms.get(code)
+        if room is not None and session.watching is room:
+            if ready and ready != session.watch_ready:
+                session.watch_ready = ready
+                room.spectator_joins += 1
+            return P.JOIN_OK
+        if room is None or not room.watchable() or room.guest is None:
+            return P.JOIN_UNKNOWN
+        if session is room.host or session is room.guest:
+            return P.JOIN_UNKNOWN  # on ne se regarde pas soi-même
+        if room.host.mod_version != session.mod_version:
+            return P.JOIN_VERSION  # paquets de match d'une autre version : illisibles
+        if len(room.spectators) >= self.max_spectators:
+            return P.JOIN_FULL
+        self.leave(session, "regarde le salon %s" % code)
+        room.spectators.append(session)
+        room.spectator_joins += 1
+        session.watching = room
+        session.watch_ready = ready
+        self.log("salon %s : %r regarde (%d spectateurs)" % (code, session, len(room.spectators)))
+        return P.JOIN_OK
+
+    def unwatch(self, session):
+        room = session.watching
+        if room is None:
+            return
+        session.watching = None
+        if session in room.spectators:
+            room.spectators.remove(session)
+            self.log("salon %s : %r ne regarde plus (%d spectateurs)" % (room.code, session, len(room.spectators)))
+
+    def live_matches(self):
+        """Les matchs qu'on peut regarder : parties classées et matchs de ligue en cours, les mieux classés d'abord."""
+        rows = []
+        for room in self.rooms.values():
+            if not room.watchable() or not room.live or room.guest is None:
+                continue
+            host, guest = room.host, room.guest
+            hs = host.match_state if host.match_state and host.match_state["match_id"] == room.live else None
+            teams = hs["teams"] if hs else (0, 0, 0, 0)
+            report = host.report if host.report is not None and host.report[0] == room.live else None
+            rows.append(dict(code=room.code, host=host.player.name if host.player else host.name,
+                             guest=guest.player.name if guest.player else guest.name,
+                             host_elo=host.player.elo if host.player else 0, guest_elo=guest.player.elo if guest.player else 0,
+                             host_animal=teams[0], guest_animal=teams[2],
+                             score_host=report[2] if report else 0, score_guest=report[3] if report else 0,
+                             spectators=len(room.spectators), league=room.league is not None))
+        rows.sort(key=lambda r: -(r["host_elo"] + r["guest_elo"]))
+        return rows[:P.LIVE_ROWS]
+
     # --- file d'attente ---
 
     def enqueue(self, session, now):
@@ -337,6 +408,7 @@ class Lobby:
         self.now = now
         if session.player is None:
             return
+        self.unwatch(session)
         room = session.room
         if room is not None:
             if room.ranked:

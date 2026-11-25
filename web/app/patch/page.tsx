@@ -95,7 +95,7 @@ export default function Page() {
         <div className="card p-5">
           <h2 className="font-display text-xl text-gold-100">Au-delà de 100</h2>
           <p className="mt-2 text-sm text-ink-dim">
-            Les petites équipes peuvent dépasser 100 pour compenser. La Précision passe de 3 % à 2 % d’effet par point, pour qu’une
+            Les petites équipes peuvent dépasser 100 pour compenser. La Précision passe de 3 % à 2 % d’effet par point, et vitesse de 0.5 à 0.8 pour qu’une
             Précision de 114 reste humaine : les tirs de la Tortue s’écartent deux fois moins que la moyenne.
           </p>
         </div>

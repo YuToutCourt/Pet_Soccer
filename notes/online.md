@@ -285,6 +285,56 @@ de l'hôte) : le temps de revoir sa tactique.
   chez le client) le remplace (`ModNet.OnShowMenu`, `ClientMenu`).
 - Pendant la pause de mi-temps, échap vaut toujours « je suis prêt », des deux côtés.
 
+## Spectateurs (mod v10, dialogue 7)
+
+On peut regarder les **parties classées** et les **matchs de ligue** entre joueurs, en direct. Les salons privés
+entre amis ne se regardent pas (ni dans la liste, ni avec leur code).
+
+### Pour le joueur
+
+Écran « en ligne », hors salon : « regarder » (à la place de la ligne « durée ») montre à droite les matchs en
+cours, relus toutes les 3 s : joueurs, score, Elo moyen ou « ligue ». La ligne « match < 1 / 3 > » choisit, le
+bouton du bas « regarder » charge le match. Échap ouvre un menu local (« continuer », « quitter ») ; les menus de
+l'hôte (mi-temps, fin) s'affichent sans bouton actif. À la fin (8 s après l'écran de fin, ou 3 s sans nouvelles
+de l'hôte), retour seul à la liste. Rien ne compte chez le spectateur (Elo, historique, succès).
+L'hôte voit « Partie classée, 2 spectateurs » dans son salon.
+
+### Comment ça marche
+
+```
+hôte ──(direct ou relais)──> invité                     (inchangé)
+hôte ──_PKT_SPEC_SNAP (5), 30/s──> serveur ──> chaque spectateur
+```
+
+- L'hôte n'envoie qu'**une** copie en plus, et seulement quand `PKT_INFO` lui annonce des spectateurs
+  (`ModLobby.m_nSpectators`) : son débit montant ne dépend pas de leur nombre. Le serveur paie ~16 Ko/s par
+  spectateur, d'où `--max-spectators` (8 par défaut).
+- Copie = même état que pour l'invité, puis l'**état durable** et les **événements des 500 dernières ms**
+  (`HostPutSpecEvents`). Un spectateur ne confirme rien à l'hôte : chaque événement passe donc dans ~15 paquets, et
+  le spectateur ignore ceux qu'il a déjà vus (même numérotation que l'invité). Les plus récents passent d'abord
+  s'il n'y a pas la place.
+- **État durable** (`HostResync` : côtés, animation en cours de chaque joueur, lettres des supers) : le serveur
+  fait tourner un compteur d'arrivées (`PKT_INFO`) quand un spectateur arrive **ou dit que son stade est chargé**
+  (`PKT_SPECTATE` porte le numéro du match chargé). L'hôte voit le compteur tourner, capture `HostResync`
+  (`m_vCapture`) et le met 1,5 s dans un paquet sur trois de la copie, avec un numéro : le spectateur ne
+  l'applique qu'une fois. L'invité ne le reçoit pas (ses animations ne repartent pas de zéro).
+- Le spectateur reçoit aussi le `STATE` de l'hôte (`PKT_PEER`) : il charge le match comme l'invité
+  (`ModLobby.SpectatorCheckStart` → `ModNet.StartSpectating`). C'est un client (`m_nRole` client,
+  `m_bSpectator`) qui n'envoie ni touches ni demandes, n'a pas de liaison directe, et accepte l'état quel que
+  soit le numéro de session.
+
+| Paquet | Sens | Contenu |
+|---|---|---|
+| 26 `LIVE` | jeu → serveur | demande la liste des matchs en cours |
+| 36 `LIVE_LIST` | serveur → jeu | 8 matchs au plus : code, noms, Elo, équipes, score, spectateurs, ligue |
+| 27 `SPECTATE` | jeu → serveur | code du salon, match dont le stade est chargé (0 : aucun). Redit 1 fois par seconde ; `LEAVE` arrête |
+| 5 `SPEC_SNAP` | hôte → serveur → spectateurs | copie de l'état (voir plus haut) ; le serveur n'accepte que celle de l'hôte du salon |
+| `INFO` (fin) | serveur → jeu | spectateurs du salon, compteur d'arrivées, nom de l'invité pour un spectateur (rôle 3) |
+
+- Test sans souris : `NetAuto(7)` regarde le premier match de la liste (`NetMatches` fois).
+  `mods\build.ps1 -Third` crée `game_dev_c` ; `mods\online-test.ps1 -Ranked -Bot -Half 30 -Spectate
+  [-SpectateAt 40]`. Supprimer `game_dev_c\online.dat` s'il vient d'une copie de `game_dev` (même compte).
+
 ## Installeur pour les amis (phase 5)
 
 On donne le mod, pas le jeu : chaque ami a déjà Pet Soccer installé.

@@ -16,9 +16,9 @@ class ModNet {
    static final int _MAGIC = 0x50534E31; // "PSN1"
    // Version du mod pour le jeu en ligne : à augmenter dès que les paquets ou les règles du match changent.
    // Le serveur ne met dans un même salon que deux jeux de même version.
-   static final int _MOD_VERSION = 9; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
+   static final int _MOD_VERSION = 10; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
    // 8 : statistiques des matchs en ligne (PKT_MATCH_STATS), matchs des salons privés enregistrés par le serveur ;
-   // 9 : secret de session avec le serveur (dialogue 6)
+   // 9 : secret de session avec le serveur (dialogue 6) ; 10 : spectateurs (copie de l'état pour eux, dialogue 7)
    static final int _ROLE_NONE = 0;
    static final int _ROLE_HOST = 1;
    static final int _ROLE_CLIENT = 2;
@@ -26,6 +26,13 @@ class ModNet {
    static final int _PKT_SNAP = 2; // hôte -> client
    static final int _PKT_BYE = 3; // l'un des deux quitte le match
    static final int _PKT_PUNCH = 4; // sonde de la liaison directe : d'un jeu à l'autre, jamais par le serveur
+   // Copie de l'état pour les spectateurs : hôte -> serveur -> chaque spectateur. Comme _PKT_SNAP, avec l'état durable
+   // quand un spectateur vient d'arriver, et tous les événements récents (un spectateur ne confirme rien à l'hôte).
+   static final int _PKT_SPEC_SNAP = 5;
+   static final long _SPEC_WINDOW_MS = 500L; // événements redits aux spectateurs pendant ce temps
+   static final long _SPEC_RESYNC_MS = 1500L; // état durable redit pendant ce temps après une arrivée
+   static final long _SPEC_END_MS = 3000L; // spectateur : retour à l'écran « en ligne » après ce temps sans hôte
+   static final long _SPEC_END_SHOWN_MS = 8000L; // ... ou après ce temps sur l'écran de fin du match
    // Liaison directe (PunchFrame)
    static final long _PUNCH_FAST_MS = 250L; // entre deux sondes tant que la liaison n'est pas faite
    static final long _PUNCH_SLOW_MS = 1000L; // ensuite : elles gardent le passage ouvert dans les box
@@ -166,6 +173,12 @@ class ModNet {
    static byte[][] m_tEvents = new byte[_EVENT_RING][];
    static int m_nEventNext = 1; // numéro du prochain événement
    static int m_nEventAcked = 0; // dernier événement reçu par le client
+   static long[] m_tEventTime = new long[_EVENT_RING]; // heure de chaque événement (fenêtre des spectateurs)
+   static int m_nSpecJoinsSeen = -1; // compteur d'arrivées des spectateurs (ModLobby.m_nSpecJoins) déjà servi
+   static byte[][] m_tSpecResync = null; // état durable pour les spectateurs (HostResync), redit un moment
+   static long m_lSpecResyncUntil = 0L;
+   static int m_nSpecResyncGen = 0; // numéro de cet état durable : le spectateur ne l'applique qu'une fois
+   static java.util.Vector m_vCapture = null; // EvEnd range ici les événements au lieu de la file (HostSpecResync)
    static String[] m_tLastAnim = new String[40]; // dernière animation de chaque objet, pour un client qui arrive
    static int[] m_tLastRep = new int[40];
    static int m_nCamTarget = _CAM_BALL;
@@ -211,6 +224,11 @@ class ModNet {
    static boolean m_bHostSupers = true;
    static boolean m_bHostLost = false; // plus de nouvelles de l'hôte
    static boolean m_bHostLeft = false; // l'hôte a quitté le match
+   // Spectateur : un client qui n'envoie rien. Il reçoit la copie de l'état par le serveur (_PKT_SPEC_SNAP).
+   static boolean m_bSpectator = false;
+   static int m_nSpecResyncApplied = -1; // dernier état durable appliqué
+   static long m_lSpecEndAt = 0L; // retour à l'écran « en ligne » prévu à cette heure
+   static long m_lSpecReadyAt = 0L; // stade chargé chez le spectateur
    static ControlObject[] m_tLoopObj = new ControlObject[_LOOPS];
    static int[] m_tLoopId = new int[_LOOPS];
    static String[][] m_tStats = null; // statistiques du menu, calculées par l'hôte
@@ -247,10 +265,20 @@ class ModNet {
       return m_nRole != _ROLE_NONE;
    }
 
+   // Ce jeu regarde le match d'autres joueurs : client sans touches ni demandes
+   static boolean IsSpectator() {
+      return m_nRole == _ROLE_CLIENT && m_bSpectator;
+   }
+
+   // Hôte : des spectateurs regardent ce match (le serveur le dit dans PKT_INFO)
+   static boolean HostWatched() {
+      return m_nRole == _ROLE_HOST && ModLobby.IsOpen() && ModLobby.m_nSpectators > 0;
+   }
+
    // En ligne, l'équipe de ce jeu : celle de gauche au coup d'envoi pour l'hôte, de droite pour le client.
-   // Ne pas comparer le côté (GetTeam(n)) : les équipes changent de côté à la mi-temps.
+   // Ne pas comparer le côté (GetTeam(n)) : les équipes changent de côté à la mi-temps. Un spectateur n'en a pas.
    static boolean IsMyTeam(Team cTeam) {
-      return cTeam != null && cTeam == m_tTeam[m_nRole == _ROLE_CLIENT ? 1 : 0];
+      return cTeam != null && !IsSpectator() && cTeam == m_tTeam[m_nRole == _ROLE_CLIENT ? 1 : 0];
    }
 
    // debugconf.scr : NetHost(port)
@@ -360,6 +388,9 @@ class ModNet {
       m_nInputApplied = 0;
       m_nEventNext = 1;
       m_nEventAcked = 0;
+      m_nSpecJoinsSeen = -1;
+      m_tSpecResync = null;
+      m_lSpecResyncUntil = 0L;
       m_bEverConnected = false;
       m_nLoggedScore = 0;
       m_bLoggedReplay = false;
@@ -369,6 +400,10 @@ class ModNet {
       m_nEventApplied = -1;
       m_nLastSnapSeq = 0;
       m_bHostLeft = false;
+      m_bSpectator = false; // StartSpectating le remet juste après
+      m_nSpecResyncApplied = -1;
+      m_lSpecEndAt = 0L;
+      m_lSpecReadyAt = 0L;
       m_nBotStep = 0;
       m_nBotDir = -1;
       m_lBotNext = 0L;
@@ -385,6 +420,14 @@ class ModNet {
       }
 
       Log("match en salon, " + (bHost ? "hote" : "client, session " + m_nSession));
+   }
+
+   // ModLobby.BeginMatch, chez un spectateur : un client qui n'envoie rien et lit la copie de l'état que le serveur
+   // lui fait suivre
+   static void StartSpectating(SocketAddress cServer, int nHalfSeconds) {
+      StartMatch(false, cServer, nHalfSeconds);
+      m_bSpectator = true;
+      Log("spectateur : le match arrive par le serveur");
    }
 
    // ModTactics.GetTeamComposition : chez l'hôte d'un salon, composition envoyée par l'invité pour son équipe
@@ -532,7 +575,7 @@ class ModNet {
                ReadBye();
             } else if (m_nRole == _ROLE_HOST && nType == _PKT_INPUT) {
                HostReadInput(cFrom, lNow);
-            } else if (m_nRole == _ROLE_CLIENT && nType == _PKT_SNAP) {
+            } else if (m_nRole == _ROLE_CLIENT && nType == (m_bSpectator ? _PKT_SPEC_SNAP : _PKT_SNAP)) {
                ClientReadSnap(lNow);
             }
          } catch (RuntimeException e) {
@@ -883,7 +926,7 @@ class ModNet {
       }
 
       if (m_nRole == _ROLE_CLIENT && m_bHostLost) {
-         return "&OnlineHostLost&";
+         return m_bSpectator ? "&OnlineSpecEnded&" : "&OnlineHostLost&";
       }
 
       return null;
@@ -907,7 +950,7 @@ class ModNet {
       }
 
       try {
-         if (m_cChannel != null && m_cPeer != null) {
+         if (m_cChannel != null && m_cPeer != null && !m_bSpectator) { // l'hôte ne connaît pas les spectateurs
             for (int i = 0; i < 3; i++) {
                m_cOut.clear();
                m_cOut.putInt(_MAGIC);
@@ -1020,6 +1063,78 @@ class ModNet {
       }
 
       HostQueueHud(_HUD_SWITCH, cMatch.m_nPlayer1Team, 0, 0);
+   }
+
+   // Un spectateur est arrivé, ou son stade vient d'être chargé (compteur du serveur) : l'état durable du match
+   // (HostResync) part dans la copie des spectateurs seulement, pendant _SPEC_RESYNC_MS. L'invité ne le reçoit pas :
+   // ses animations ne repartent pas de zéro à chaque spectateur.
+   static void HostSpecResync(long lNow) {
+      int nJoins = ModLobby.m_nSpecJoins;
+      if (nJoins == m_nSpecJoinsSeen || !MatchReady()) {
+         return;
+      }
+
+      m_nSpecJoinsSeen = nJoins;
+      m_vCapture = new java.util.Vector();
+
+      try {
+         HostResync();
+      } finally {
+         m_tSpecResync = new byte[m_vCapture.size()][];
+         m_vCapture.copyInto(m_tSpecResync);
+         m_vCapture = null;
+      }
+
+      m_nSpecResyncGen = (m_nSpecResyncGen + 1) & 0xFF;
+      m_lSpecResyncUntil = lNow + _SPEC_RESYNC_MS;
+      Log("spectateurs : " + ModLobby.m_nSpectators + ", etat durable envoye (" + m_tSpecResync.length + " evenements)");
+   }
+
+   // Fin de la copie des spectateurs : état durable (numéro, nombre, événements), puis les événements des
+   // _SPEC_WINDOW_MS dernières millisecondes, les plus récents d'abord s'il n'y a pas la place pour tous.
+   // L'état durable ne passe qu'un paquet sur trois : il laisse ainsi la place aux événements récents.
+   static void HostPutSpecEvents(ByteBuffer b, long lNow) {
+      boolean bResync = m_tSpecResync != null && lNow < m_lSpecResyncUntil && m_nSnapSeq % 3 == 0;
+      b.put((byte)m_nSpecResyncGen);
+      int nResyncPos = b.position();
+      b.put((byte)0);
+      int nResync = 0;
+
+      for (int i = 0; bResync && i < m_tSpecResync.length && nResync < 255; i++) {
+         byte[] tEvent = m_tSpecResync[i];
+         if (b.position() + 2 + tEvent.length > _MAX_PACKET - 5) {
+            Log("spectateurs : etat durable trop gros pour un paquet, " + (m_tSpecResync.length - i) + " evenements laisses");
+            break;
+         }
+
+         b.putShort((short)tEvent.length);
+         b.put(tEvent);
+         nResync++;
+      }
+
+      b.put(nResyncPos, (byte)nResync);
+      // les plus récents qui tiennent, dans la fenêtre
+      int nRoom = _MAX_PACKET - b.position() - 5;
+      int nFirst = m_nEventNext;
+
+      for (int nSeq = m_nEventNext - 1; nSeq >= 1 && nSeq > m_nEventNext - 1 - _EVENT_RING && m_nEventNext - nSeq <= 255; nSeq--) {
+         byte[] tEvent = m_tEvents[nSeq % _EVENT_RING];
+         if (tEvent == null || lNow - m_tEventTime[nSeq % _EVENT_RING] > _SPEC_WINDOW_MS || nRoom < 2 + tEvent.length) {
+            break;
+         }
+
+         nRoom -= 2 + tEvent.length;
+         nFirst = nSeq;
+      }
+
+      b.putInt(nFirst);
+      b.put((byte)(m_nEventNext - nFirst));
+
+      for (int nSeq = nFirst; nSeq < m_nEventNext; nSeq++) {
+         byte[] tEvent = m_tEvents[nSeq % _EVENT_RING];
+         b.putShort((short)tEvent.length);
+         b.put(tEvent);
+      }
    }
 
    static TeamController HostRemoteController() {
@@ -1139,7 +1254,7 @@ class ModNet {
       if (cModule.m_bMenuVisible) {
          if (m_nRole == _ROLE_CLIENT) {
             // pause de mi-temps : échap vaut « continuer », comme chez l'hôte
-            if (m_nShownMenu == 2 && !m_bHostLost) {
+            if (m_nShownMenu == 2 && !m_bHostLost && !m_bSpectator) {
                ClientQueueKey(_ACT_ESC, true);
             }
 
@@ -1208,7 +1323,12 @@ class ModNet {
          HostBot(lNow);
       }
 
-      if (m_cPeer == null || lNow < m_lNextSnap) {
+      boolean bWatched = HostWatched();
+      if (bWatched) {
+         HostSpecResync(lNow);
+      }
+
+      if (m_cPeer == null && !bWatched || lNow < m_lNextSnap) {
          return;
       }
 
@@ -1260,32 +1380,48 @@ class ModNet {
 
       PutObject(b, cMatch.m_cReferee);
       HostPutExtras(b, cModule, cMatch, cBall);
+      int nStateEnd = b.position(); // la suite diffère entre l'invité et les spectateurs
 
-      // Événements fiables : tous ceux que le client n'a pas encore confirmés, tant qu'il reste de la place
-      if (m_nEventNext - 1 - m_nEventAcked > _EVENT_RING) {
-         Log("file d'evenements pleine, " + (m_nEventNext - 1 - m_nEventAcked - _EVENT_RING) + " perdus");
-         m_nEventAcked = m_nEventNext - 1 - _EVENT_RING;
-      }
-
-      int nFirst = m_nEventAcked + 1;
-      b.putInt(nFirst);
-      int nCountPos = b.position();
-      b.put((byte)0);
-      int nEvents = 0;
-
-      for (int nSeq = nFirst; nSeq < m_nEventNext && nEvents < 255; nSeq++) {
-         byte[] tEvent = m_tEvents[nSeq % _EVENT_RING];
-         if (b.position() + 2 + tEvent.length > _MAX_PACKET) {
-            break;
+      if (m_cPeer != null) {
+         // Événements fiables : tous ceux que le client n'a pas encore confirmés, tant qu'il reste de la place
+         if (m_nEventNext - 1 - m_nEventAcked > _EVENT_RING) {
+            Log("file d'evenements pleine, " + (m_nEventNext - 1 - m_nEventAcked - _EVENT_RING) + " perdus");
+            m_nEventAcked = m_nEventNext - 1 - _EVENT_RING;
          }
 
-         b.putShort((short)tEvent.length);
-         b.put(tEvent);
-         nEvents++;
+         int nFirst = m_nEventAcked + 1;
+         b.putInt(nFirst);
+         int nCountPos = b.position();
+         b.put((byte)0);
+         int nEvents = 0;
+
+         for (int nSeq = nFirst; nSeq < m_nEventNext && nEvents < 255; nSeq++) {
+            byte[] tEvent = m_tEvents[nSeq % _EVENT_RING];
+            if (b.position() + 2 + tEvent.length > _MAX_PACKET) {
+               break;
+            }
+
+            b.putShort((short)tEvent.length);
+            b.put(tEvent);
+            nEvents++;
+         }
+
+         b.put(nCountPos, (byte)nEvents);
+         Send();
       }
 
-      b.put(nCountPos, (byte)nEvents);
-      Send();
+      if (bWatched) {
+         // Même état, puis l'état durable (après une arrivée) et les événements récents : envoyé une fois au
+         // serveur, qui le distribue à chaque spectateur
+         b.limit(b.capacity());
+         b.position(nStateEnd);
+         b.put(4, (byte)_PKT_SPEC_SNAP);
+         HostPutSpecEvents(b, lNow);
+         b.flip();
+         m_cChannel.send(b, ModLobby.m_cServer);
+         m_nStatOut++;
+      }
+
       int nMenu = HostMenuState(cModule);
       int nScore = cMatch.m_nScoreLeft * 100 + cMatch.m_nScoreRight;
       if (nScore != m_nLoggedScore && SoccerGame.m_bDebug) {
@@ -1459,12 +1595,18 @@ class ModNet {
 
    // ------------------------------------------------------------------ hôte : événements
 
+   // Quelqu'un reçoit les événements de ce match : l'invité, ou des spectateurs
    static boolean HostHasPeer() {
-      return m_nRole == _ROLE_HOST && m_cPeer != null && !m_bLeft;
+      return m_nRole == _ROLE_HOST && (m_cPeer != null || HostWatched()) && !m_bLeft;
    }
 
    static void HostQueueEvent(byte[] tEvent) {
-      if (m_cPeer == null) {
+      if (m_vCapture != null) {
+         m_vCapture.addElement(tEvent); // état durable pour les spectateurs (HostSpecResync)
+         return;
+      }
+
+      if (m_cPeer == null && !HostWatched()) {
          return;
       }
 
@@ -1474,6 +1616,7 @@ class ModNet {
       }
 
       m_tEvents[m_nEventNext % _EVENT_RING] = tEvent;
+      m_tEventTime[m_nEventNext % _EVENT_RING] = System.currentTimeMillis();
       m_nEventNext++;
       m_nStatEvents++;
    }
@@ -1749,6 +1892,10 @@ class ModNet {
          return false;
       }
 
+      if (m_bSpectator) {
+         return true; // un spectateur ne joue pas : ses touches ne vont nulle part
+      }
+
       int nAction = -1;
       if (cController.m_Actions[0] instanceof InputDigital && ((InputDigital)cController.m_Actions[0]).m_iKeyValue == nKeyCode) {
          nAction = _ACT_PASS;
@@ -1788,7 +1935,7 @@ class ModNet {
       if (bKeyState) {
          if (nKeyCode == 1) {
             OnEscape(SoccerGame.activeLevelModule);
-         } else if (nKeyCode == 57 && !m_bHostLost && !m_bLocalMenu) {
+         } else if (nKeyCode == 57 && !m_bHostLost && !m_bLocalMenu && !m_bSpectator) {
             ClientQueueKey(_ACT_SPACE, true);
          }
       }
@@ -1810,11 +1957,11 @@ class ModNet {
          return false;
       }
 
-      if (!m_bHostLost) {
+      if (!m_bHostLost && !m_bSpectator) {
          ClientQueueKey(_ACT_CONTINUE, true);
       }
 
-      return true;
+      return true; // spectateur : le menu de l'hôte se fermera chez lui
    }
 
    // ModSwitch.OnKey : chez le client, une touche directe part à l'hôte. Renvoie vrai si elle est envoyée.
@@ -1823,7 +1970,10 @@ class ModNet {
          return false;
       }
 
-      ClientQueueKey(_ACT_SEL + nIndex, true);
+      if (!m_bSpectator) {
+         ClientQueueKey(_ACT_SEL + nIndex, true);
+      }
+
       return true;
    }
 
@@ -1938,10 +2088,48 @@ class ModNet {
       }
    }
 
+   // Spectateur, chaque frame une fois le stade chargé : retour à l'écran « en ligne » quand l'hôte ne diffuse plus
+   // (match quitté, salon fermé), ou un moment après l'écran de fin du match
+   static void SpectatorFrame(long lNow) {
+      SoccerModule cModule = SoccerGame.activeLevelModule;
+      if (m_lSpecReadyAt == 0L) {
+         m_lSpecReadyAt = lNow;
+         Log("spectateur : stade charge, match " + ModLobby.m_nLastMatchId);
+      }
+
+      boolean bGone = m_lLastRecv == 0L ? lNow - m_lSpecReadyAt > 15000L : lNow - m_lLastRecv > _TIMEOUT_MS;
+      boolean bEnded = m_nShownMenu == 3;
+      long lWait = bGone ? _SPEC_END_MS : (bEnded ? _SPEC_END_SHOWN_MS : 0L);
+      if (lWait == 0L || cModule == null || cModule.m_cMenuInGameModule == null) {
+         m_lSpecEndAt = 0L;
+         return;
+      }
+
+      if (m_lSpecEndAt == 0L) {
+         m_lSpecEndAt = lNow + lWait;
+         Log(bGone ? "spectateur : plus rien de l'hote" : "spectateur : fin du match");
+      } else if (lNow >= m_lSpecEndAt) {
+         if (!cModule.m_bMenuVisible) {
+            cModule.ShowMenu(); // Quit attend le menu du match ouvert
+            m_lSpecEndAt = lNow + 500L;
+            return;
+         }
+
+         m_lSpecEndAt = 0L;
+         Log("spectateur : retour a l'ecran en ligne");
+         cModule.m_cMenuInGameModule.m_cMenuInGame.Quit();
+      }
+   }
+
    static void ClientSend(long lNow) throws java.io.IOException {
       // L'hôte ne voit le client qu'une fois son terrain chargé : il l'attend jusque-là
       if (!MatchReady()) {
          return;
+      }
+
+      if (m_bSpectator) {
+         SpectatorFrame(lNow);
+         return; // rien à envoyer : l'hôte ne connaît pas les spectateurs
       }
 
       if (m_bBot) {
@@ -1974,7 +2162,8 @@ class ModNet {
 
    static void ClientReadSnap(long lNow) {
       ByteBuffer b = m_cIn;
-      if (b.getInt() != m_nSession || !MatchReady()) {
+      int nSession = b.getInt(); // celle de l'invité : un spectateur prend la copie quelle qu'elle soit
+      if (!m_bSpectator && nSession != m_nSession || !MatchReady()) {
          return; // état destiné à une ancienne session, ou terrain pas encore prêt
       }
 
@@ -2050,6 +2239,10 @@ class ModNet {
          m_nHalfFlags = s.nFlagsB;
       }
 
+      if (m_bSpectator) {
+         ClientReadSpecResync(b);
+      }
+
       int nFirst = b.getInt();
       int nEvents = b.get() & 0xFF;
       // Premier état, ou événements que l'hôte a renoncé à renvoyer (retour après une coupure) :
@@ -2071,6 +2264,36 @@ class ModNet {
                ClientApplyEvent(b);
             } catch (RuntimeException e) {
                Log("evenement " + nEventSeq + " illisible : " + e);
+            } finally {
+               m_bApplying = false;
+            }
+         }
+
+         b.position(nNext);
+      }
+   }
+
+   // Spectateur : état durable du match (côtés, animations en cours, lettres des supers), envoyé par l'hôte après
+   // une arrivée. Il est redit plusieurs fois : appliqué une seule fois par numéro.
+   static void ClientReadSpecResync(ByteBuffer b) {
+      int nGen = b.get() & 0xFF;
+      int nCount = b.get() & 0xFF;
+      boolean bApply = nCount > 0 && nGen != m_nSpecResyncApplied;
+      if (bApply) {
+         m_nSpecResyncApplied = nGen;
+         Log("spectateur : etat durable " + nGen + ", " + nCount + " evenements");
+      }
+
+      for (int i = 0; i < nCount; i++) {
+         int nLen = b.getShort() & 0xFFFF;
+         int nNext = b.position() + nLen;
+         if (bApply) {
+            m_bApplying = true;
+
+            try {
+               ClientApplyEvent(b);
+            } catch (RuntimeException e) {
+               Log("etat durable illisible : " + e);
             } finally {
                m_bApplying = false;
             }
@@ -2766,7 +2989,12 @@ class ModNet {
       if (ModLobby.IsOpen()) {
          // match d'un salon : le canal reste ouvert, le joueur retourne dans le salon
          if (m_nRole != _ROLE_NONE) {
-            Log("fin du match, retour au salon");
+            Log(m_bSpectator ? "fin du match regarde, retour a l'ecran en ligne" : "fin du match, retour au salon");
+         }
+
+         if (m_bSpectator) {
+            m_bSpectator = false;
+            ModLobby.OnSpectatorDone();
          }
 
          m_nRole = _ROLE_NONE;

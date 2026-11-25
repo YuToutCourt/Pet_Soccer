@@ -8,8 +8,9 @@
   -Run    : lance le jeu après le build
   -Second : recopie game_dev dans game_dev_b, un second dossier de jeu pour tester le multijoueur en ligne
             à deux sur le même PC (ses sauvegardes, son debugconf.scr et ses réglages vidéo lui restent propres)
+  -Third  : de même dans game_dev_c, un troisième jeu qui regarde le match en spectateur (online-test.ps1 -Spectate)
 #>
-param([switch]$Clean, [switch]$Run, [switch]$Second)
+param([switch]$Clean, [switch]$Run, [switch]$Second, [switch]$Third)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -79,12 +80,12 @@ if (Test-Path $DataSrc) {
     if ($LASTEXITCODE -ge 8) { throw "robocopy a échoué ($LASTEXITCODE)" }
 }
 
-# --- Second dossier de jeu (multijoueur en ligne sur un seul PC) ---
-if ($Second) {
-    $DevB = Join-Path $Root 'game_dev_b'
+# --- Autres dossiers de jeu (multijoueur en ligne sur un seul PC) ---
+function Copy-GameDir([string]$Name) {
+    $DevB = Join-Path $Root $Name
     $first = -not (Test-Path $DevB)
-    Write-Host '[second] game_dev -> game_dev_b'
-    # Les fichiers exclus ne sont ni copiés ni supprimés : game_dev_b garde les siens.
+    Write-Host "[copie] game_dev -> $Name"
+    # Les fichiers exclus ne sont ni copiés ni supprimés : le dossier copié garde les siens.
     # Seuls les .dat et .log de la racine sont des sauvegardes et des journaux : ceux de Data\ (polices
     # de Data\Panel) font partie du jeu, d'où une liste de noms et pas *.dat.
     $own = @('debugconf.scr', 'VideoSettings.scr')
@@ -105,6 +106,9 @@ if ($Second) {
         [IO.File]::WriteAllText((Join-Path $DevB 'Data\VideoSettings.scr'), $video, $enc)
     }
 }
+
+if ($Second) { Copy-GameDir 'game_dev_b' }
+if ($Third) { Copy-GameDir 'game_dev_c' }  # le spectateur des tests (online-test.ps1 -Spectate)
 
 Write-Host '[ok] build terminé'
 

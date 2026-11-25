@@ -3,6 +3,7 @@
 game_pristine/
 game_dev/
 game_dev_b/
+game_dev_c/
 tools/
 build/
 # Sources décompilées : régénérables depuis code.pak

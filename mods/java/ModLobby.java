@@ -11,8 +11,9 @@ import java.nio.ByteBuffer;
 // redit tout ce que le joueur veut (« je crée un salon », « je suis dans ce salon avec cette équipe »), et le
 // serveur répond à chacun par l'état du salon. Une perte se rattrape donc au paquet suivant.
 class ModLobby {
-   static final int _LOBBY_PROTO = 6; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne ; 5 : statistiques ;
-   // 6 : secret de session (donné par PKT_INFO, redit dans chaque paquet), paquets complétés à _MIN_SIZE octets
+   static final int _LOBBY_PROTO = 7; // version du dialogue avec le serveur (server/protocol.py) ; 4 : ligue en ligne ; 5 : statistiques ;
+   // 6 : secret de session (donné par PKT_INFO, redit dans chaque paquet), paquets complétés à _MIN_SIZE octets ;
+   // 7 : spectateurs (PKT_LIVE, PKT_SPECTATE, fin de PKT_INFO)
    static final int _MIN_SIZE = 96; // LOBBY_MIN_SIZE de protocol.py : le serveur ignore un paquet plus court
    static final int _HEAD_SIZE = 17; // magie, type, identifiant, numéro, secret (PKT_HELLO : 13, le secret vient après la version)
    static final int _STATUS_BUSY = 3; // trop de jeux connectés au serveur (ou depuis notre adresse IP) : on réessaie
@@ -27,10 +28,13 @@ class ModLobby {
    static final int _PKT_MATCH = 22; // où en est mon match classé
    static final int _PKT_TOP = 23; // demande le classement
    static final int _PKT_MATCH_STATS = 25; // [mod] statistiques du match, envoyées par le jeu de l'hôte (ModStats.PutMatchStats)
+   static final int _PKT_LIVE = 26; // demande la liste des matchs qu'on peut regarder
+   static final int _PKT_SPECTATE = 27; // + code du salon, match dont mon stade est chargé : je regarde ce match
    // serveur -> jeu
    static final int _PKT_INFO = 32;
    static final int _PKT_PEER = 33;
    static final int _PKT_RANKS = 34;
+   static final int _PKT_LIVE_LIST = 36; // matchs en cours qu'on peut regarder (parties classées, ligue)
    // phase d'un match classé annoncée au serveur (MATCH_* de protocol.py)
    static final int _MATCH_PLAYING = 1;
    static final int _MATCH_FINISHED = 2;
@@ -44,6 +48,7 @@ class ModLobby {
    static final int _HOW_PEER_FORFEIT = 2;
    static final int _HOW_MY_FORFEIT = 3;
    static final int _TOP_ROWS = 8; // lignes du classement (TOP_ROWS de protocol.py)
+   static final int _LIVE_ROWS = 8; // matchs dans PKT_LIVE_LIST (LIVE_ROWS de protocol.py)
    static final String _ACCOUNT_FILE = "online.dat";
    // liaison au serveur
    static final int _NET_OFF = 0;
@@ -59,8 +64,10 @@ class ModLobby {
    static final int _WANT_JOIN = 2;
    static final int _WANT_QUEUE = 3; // partie rapide
    static final int _WANT_LEAGUE = 4; // ligue en ligne : j'attends le salon que le serveur ouvre pour mon match contre un ami
+   static final int _WANT_WATCH = 5; // regarder le match du salon m_sWantCode (spectateur)
    static final int _ROLE_HOST = 1;
    static final int _ROLE_GUEST = 2;
+   static final int _ROLE_SPECTATOR = 3;
    // pourquoi le joueur n'est pas (ou plus) dans un salon ; 1..3 = refus du serveur (JOIN_* de protocol.py)
    static final int _OUT_NONE = 0;
    static final int _OUT_UNKNOWN_CODE = 1;
@@ -68,6 +75,8 @@ class ModLobby {
    static final int _OUT_VERSION = 3;
    static final int _OUT_CLOSED = 4; // l'hôte est parti, ou le serveur nous a oubliés
    static final int _OUT_NO_ROOM = 5; // le serveur ne peut plus créer de salon
+   static final int _OUT_WATCH_GONE = 6; // spectateur : ce match n'est plus en cours
+   static final int _OUT_WATCH_FULL = 7; // spectateur : plus de place pour regarder ce match
    static final int _CODE_LENGTH = 4;
    static final int _LEVELS = 12; // stades proposés : ceux des 12 équipes d'origine
    static final long _SILENCE_MS = 6000L;
@@ -87,7 +96,8 @@ class ModLobby {
    static int m_nDebugQuit = 0; // NetQuit(secondes) : quitte le match au bout de ce temps (test du forfait)
    // NetAuto(1) : crée un salon et lance le match tout seul ; NetAuto(2) : rejoint le salon NetCode ;
    // NetAuto(3) : ouvre seulement le menu principal, sans passer par le choix du profil ;
-   // NetAuto(4) : partie rapide, se met prêt tout seul (NetMatches matchs)
+   // NetAuto(4) : partie rapide, se met prêt tout seul (NetMatches matchs) ; NetAuto(5, 6) : ligue en ligne ;
+   // NetAuto(7) : spectateur, regarde le premier match de la liste des matchs en cours (NetMatches fois)
    static int m_nAuto = 0;
    static String m_sAutoCode = "TEST"; // NetCode("....")
    static int m_nAutoAnimal = -1; // NetTeam(animal, tenue)
@@ -204,6 +214,24 @@ class ModLobby {
    static int m_nLastMatchId = 0; // dernier match où ce jeu est entré
    static ModTactics.Composition m_cRemoteComp = null; // chez l'hôte : composition envoyée par l'invité
 
+   // --- spectateurs ---
+   static int m_nSpectators = 0; // hôte : spectateurs de mon salon (PKT_INFO)
+   static int m_nSpecJoins = 0; // hôte : compteur de leurs arrivées ; quand il tourne, ModNet leur renvoie l'état durable
+   static boolean m_bWatching = false; // le serveur m'a fait spectateur du salon m_sWatchRoom
+   static String m_sWatchRoom = null;
+   static String m_sWatchHost = ""; // les deux joueurs du match regardé
+   static String m_sWatchGuest = "";
+   static int m_nWatchHostElo = 0;
+   static boolean m_bLiveView = false; // l'écran « en ligne » montre les matchs en cours à la place du classement
+   static boolean m_bLiveKnown = false;
+   static long m_lNextLive = 0L;
+   static int m_nLiveCount = 0;
+   static String[] m_tLiveCode = new String[_LIVE_ROWS];
+   static String[] m_tLiveHost = new String[_LIVE_ROWS];
+   static String[] m_tLiveGuest = new String[_LIVE_ROWS];
+   // Elo de l'hôte, de l'invité, leurs équipes, le score, les spectateurs, drapeaux (1 : ligue)
+   static int[][] m_tLiveInfo = new int[_LIVE_ROWS][8];
+
    static void Log(String s) {
       GameObject.CrashLog("[mod] salon " + s + "\n");
    }
@@ -279,6 +307,11 @@ class ModLobby {
 
    static boolean IsGuest() {
       return m_sRoom != null && m_nRole == _ROLE_GUEST;
+   }
+
+   // Je regarde un match, ou je l'ai demandé
+   static boolean IsWatching() {
+      return m_nWant == _WANT_WATCH || m_bWatching;
    }
 
    // Le match en cours est une partie classée (pas de « recommencer », quitter = forfait)
@@ -532,6 +565,9 @@ class ModLobby {
    static void ClearRoom() {
       m_sRoom = null;
       m_nRole = 0;
+      m_nSpectators = 0;
+      m_bWatching = false;
+      m_sWatchRoom = null;
       m_bReady = false;
       m_bRanked = false;
       m_bLeagueRoom = false;
@@ -583,8 +619,31 @@ class ModLobby {
       Want(_WANT_QUEUE, "");
    }
 
-   // Quitte le salon, ou la file d'attente
+   // Regarder le match d'un salon classé ou de ligue (liste des matchs en cours)
+   static void Watch(String sCode) {
+      if (!IsOpen() || sCode == null || sCode.length() == 0) {
+         return;
+      }
+
+      Log("spectateur : demande le salon " + sCode);
+      m_nOut = _OUT_NONE;
+      Want(_WANT_WATCH, sCode);
+   }
+
+   // ModNet.OnModuleDestroy : le match regardé est fini (ou quitté). Je ne regarde plus : retour à la liste.
+   static void OnSpectatorDone() {
+      if (IsWatching()) {
+         Leave();
+      }
+
+      m_bLiveView = true;
+      m_lNextLive = 0L;
+   }
+
+   // Quitte le salon, ou la file d'attente (ou cesse de regarder un match)
    static void Leave() {
+      m_bWatching = false;
+      m_sWatchRoom = null;
       if (m_sRoom != null) {
          Log("quitte le salon " + m_sRoom);
       }
@@ -832,7 +891,23 @@ class ModLobby {
       return true;
    }
 
+   // MenuOnline.Tick, chez un spectateur : l'hôte du match regardé joue un match qu'on n'a pas encore chargé.
+   // Renvoie vrai si le match se charge.
+   static boolean SpectatorCheckStart() {
+      if (!m_bWatching || !m_bPeerState || m_nPeerMatchId == 0 || m_nPeerMatchId == m_nLastMatchId || ModNet.IsOnline()) {
+         return false;
+      }
+
+      if (!IsValidTeam(m_tPeerTeams[0], m_tPeerTeams[1]) || !IsValidTeam(m_tPeerTeams[2], m_tPeerTeams[3]) || m_nPeerLevel < 0 || m_nPeerLevel >= _LEVELS) {
+         return false;
+      }
+
+      BeginMatch(false, m_tPeerTeams, m_nPeerLevel, m_nPeerHalf, m_nPeerMatchId);
+      return true;
+   }
+
    static void BeginMatch(boolean bHost, int[] tTeams, int nLevel, int nHalf, int nMatchId) {
+      boolean bSpectator = m_bWatching && !bHost;
       m_bReady = false;
       m_nLastMatchId = nMatchId;
       m_lAutoQuit = 0L;
@@ -840,7 +915,9 @@ class ModLobby {
       m_bRankedMatch = m_bRanked;
       m_nRepMatch = 0;
       m_tRepStats = null;
-      if (m_nNet == _NET_ONLINE) {
+      if (bSpectator) {
+         m_bRankedMatch = false; // un spectateur n'annonce rien au serveur : le match n'est pas le sien
+      } else if (m_nNet == _NET_ONLINE) {
          // Le serveur enregistre le match quand les deux jeux lui annoncent la même fin (ReportFrame) ; un match classé
          // change aussi l'Elo. Un salon privé est enregistré sans Elo, et le jeu n'en affiche pas l'issue.
          if (m_bRanked) {
@@ -858,7 +935,7 @@ class ModLobby {
          m_bRepHost = bHost;
       }
 
-      if (m_nAuto == 4) {
+      if (m_nAuto == 4 || m_nAuto == 7 && bSpectator) {
          m_nAutoMatches--;
       }
 
@@ -874,13 +951,18 @@ class ModLobby {
       CoreLogic.m_cTeamDataRight = new TeamData(ETeams.GetTeamData(tTeams[2]));
       CoreLogic.m_cTeamDataRight.SetClothesId(tTeams[3]);
       CoreLogic.m_nNextLevel = nLevel;
-      if (m_bLeagueRoom) {
+      if (m_bLeagueRoom && !bSpectator) {
          ModOnlineLeague.OnFriendMatchBegin(bHost); // retour à l'écran de la ligue, but en or en playoffs
       }
 
-      Log("match " + nMatchId + (bHost ? " (hote)" : " (invite)") + (m_bRanked ? " classe" : "") + (m_bLeagueRoom ? " (ligue)" : "") + " : equipe " + tTeams[0] + " tenue " + tTeams[1] + " contre equipe "
+      Log("match " + nMatchId + (bHost ? " (hote)" : (bSpectator ? " (spectateur de " + m_sWatchHost + " contre " + m_sWatchGuest + ")" : " (invite)")) + (m_bRanked ? " classe" : "") + (m_bLeagueRoom ? " (ligue)" : "") + " : equipe " + tTeams[0] + " tenue " + tTeams[1] + " contre equipe "
          + tTeams[2] + " tenue " + tTeams[3] + ", stade " + nLevel + ", mi-temps " + nHalf + " s");
-      ModNet.StartMatch(bHost, m_cServer, nHalf);
+      if (bSpectator) {
+         ModNet.StartSpectating(m_cServer, nHalf);
+      } else {
+         ModNet.StartMatch(bHost, m_cServer, nHalf);
+      }
+
       SoccerGame.game.GetCommentator().HideNow();
       SoccerGame.game.RunModule();
    }
@@ -1143,6 +1225,12 @@ class ModLobby {
             m_lNextTop = lNow + 5000L;
             Send(Begin(_PKT_TOP));
          }
+
+         // matchs en cours : relus toutes les 3 s tant que l'écran les montre
+         if (m_bMenu && m_bLiveView && m_sRoom == null && !ModNet.IsOnline() && lNow >= m_lNextLive) {
+            m_lNextLive = lNow + 3000L;
+            Send(Begin(_PKT_LIVE));
+         }
       }
 
       if (lNow < m_lNextSend) {
@@ -1161,6 +1249,13 @@ class ModLobby {
             SendHello(); // rien à demander : on reste connu du serveur
             m_lNextSend = lNow + 1000L;
          }
+      } else if (m_nWant == _WANT_WATCH) {
+         // redit tant que je regarde ; il dit aussi au serveur quand mon stade est chargé (l'hôte me remet alors à niveau)
+         ByteBuffer b = Begin(_PKT_SPECTATE);
+         ModNet.PutString(b, m_sWantCode);
+         b.putInt(ModNet.IsSpectator() && ModNet.MatchReady() ? m_nLastMatchId : 0);
+         Send(b);
+         m_lNextSend = lNow + (m_bWatching ? 1000L : 300L);
       } else if (m_sRoom == null && m_nWant == _WANT_LEAGUE) {
          SendHello(); // le salon viendra du serveur : on reste connu de lui
          m_lNextSend = lNow + 1000L;
@@ -1204,6 +1299,8 @@ class ModLobby {
          ReadPeer(b);
       } else if (nType == _PKT_RANKS) {
          ReadRanks(b);
+      } else if (nType == _PKT_LIVE_LIST) {
+         ReadLive(b);
       } else if (nType == ModOnlineLeague._PKT_LEAGUE_INFO) {
          ModOnlineLeague.ReadInfo(b);
       }
@@ -1228,6 +1325,37 @@ class ModLobby {
       m_nTopTotal = nTotal;
       m_nTopCount = nCount;
       m_bTopKnown = true;
+   }
+
+   private static void ReadLive(ByteBuffer b) {
+      int nCount = Math.min(b.get() & 0xFF, _LIVE_ROWS);
+      String[] tCode = new String[nCount];
+      String[] tHost = new String[nCount];
+      String[] tGuest = new String[nCount];
+      int[][] tInfo = new int[nCount][8];
+
+      for (int i = 0; i < nCount; i++) {
+         tCode[i] = ModNet.GetString(b);
+         tHost[i] = ModNet.GetString(b);
+         tGuest[i] = ModNet.GetString(b);
+         tInfo[i][0] = b.getShort();
+         tInfo[i][1] = b.getShort();
+
+         for (int k = 2; k < 8; k++) {
+            tInfo[i][k] = b.get() & 0xFF;
+         }
+      }
+
+      // tout est lu : un paquet tronqué ne laisse pas une liste à moitié changée
+      for (int i = 0; i < nCount; i++) {
+         m_tLiveCode[i] = tCode[i];
+         m_tLiveHost[i] = tHost[i];
+         m_tLiveGuest[i] = tGuest[i];
+         m_tLiveInfo[i] = tInfo[i];
+      }
+
+      m_nLiveCount = nCount;
+      m_bLiveKnown = true;
    }
 
    private static void ReadInfo(ByteBuffer b) {
@@ -1292,6 +1420,9 @@ class ModLobby {
       long lPeerLocal = GetRawAddr(b);
       int nQueueRange = b.getShort();
       m_nSecret = b.getInt(); // il change quand notre adresse change
+      int nSpectators = b.get() & 0xFF; // dialogue 7 : spectateurs du salon et compteur de leurs arrivées
+      int nSpecJoins = b.get() & 0xFF;
+      String sPeer2Name = ModNet.GetString(b); // spectateur : l'invité du match regardé (sPeerName : l'hôte)
       // Mon compte et l'issue de mon dernier match classé : vrais quelle que soit la demande en cours
       m_nMyElo = nElo;
       m_nMyGames = nGames;
@@ -1317,6 +1448,28 @@ class ModLobby {
 
       m_bQueued = (nFlags & 1) != 0 && m_nWant == _WANT_QUEUE;
       m_nQueueRange = m_bQueued ? nQueueRange : 0;
+
+      // Spectateur : le serveur ne me met dans aucun salon, il me fait suivre l'état de salon de l'hôte (PKT_PEER)
+      if (m_nWant == _WANT_WATCH) {
+         ReadWatchInfo(sCode, nRole, sPeerName, sPeer2Name, nPeerElo, nJoinError);
+         return;
+      }
+
+      if (nRole == _ROLE_SPECTATOR) {
+         m_bLeaveNeeded = true; // le serveur me croit encore spectateur
+         return;
+      }
+
+      if (nRole == _ROLE_HOST) {
+         if (nSpectators != m_nSpectators) {
+            Log(nSpectators + " spectateurs");
+         }
+
+         m_nSpectators = nSpectators;
+         m_nSpecJoins = nSpecJoins;
+      } else {
+         m_nSpectators = 0;
+      }
 
       if (nJoinError != 0 && m_nWant == _WANT_JOIN && m_sRoom == null) {
          Log("entree refusee dans le salon " + m_sWantCode + " : " + nJoinError);
@@ -1393,14 +1546,52 @@ class ModLobby {
       }
    }
 
+   // PKT_INFO en réponse à PKT_SPECTATE (ou pendant que je regarde)
+   private static void ReadWatchInfo(String sCode, int nRole, String sHostName, String sGuestName, int nHostElo, int nJoinError) {
+      if (nRole == _ROLE_SPECTATOR && sCode.equals(m_sWantCode)) {
+         if (!m_bWatching) {
+            Log("spectateur du salon " + sCode + " : " + sHostName + " contre " + sGuestName);
+            m_bPeerState = false; // l'état de salon de l'hôte va arriver (PKT_PEER)
+            m_lNextSend = 0L;
+         }
+
+         m_bWatching = true;
+         m_sWatchRoom = sCode;
+         m_sWatchHost = sHostName;
+         m_sWatchGuest = sGuestName;
+         m_nWatchHostElo = nHostElo;
+         return;
+      }
+
+      if (nJoinError != 0 && !m_bWatching) {
+         Log("spectateur : salon " + m_sWantCode + " refuse (" + nJoinError + ")");
+         m_nWant = _WANT_NONE;
+         m_nOut = nJoinError == 2 ? _OUT_WATCH_FULL : (nJoinError == 3 ? _OUT_VERSION : _OUT_WATCH_GONE);
+         m_lNextLive = 0L;
+         return;
+      }
+
+      if (m_bWatching && nRole != _ROLE_SPECTATOR) {
+         // salon fermé : le match regardé est fini (en plein match, ModNet le voit aussi : plus rien de l'hôte)
+         Log("spectateur : le salon " + m_sWatchRoom + " est ferme");
+         m_bWatching = false;
+         m_sWatchRoom = null;
+         m_nWant = _WANT_NONE;
+         m_nOut = ModNet.IsOnline() ? _OUT_NONE : _OUT_WATCH_GONE;
+         m_bPeerState = false;
+         m_lNextLive = 0L;
+      }
+   }
+
    private static void ReadPeer(ByteBuffer b) {
-      if (m_sRoom == null) {
+      if (m_sRoom == null && !m_bWatching) {
          return;
       }
 
       int nFlags = b.get();
-      // Son rôle doit être l'inverse du mien : sinon c'est un paquet égaré d'un autre salon
-      if (((nFlags & 2) != 0) == IsHost()) {
+      // Son rôle doit être l'inverse du mien : sinon c'est un paquet égaré d'un autre salon. Un spectateur ne
+      // reçoit que l'état de l'hôte.
+      if (m_bWatching ? (nFlags & 2) == 0 : ((nFlags & 2) != 0) == IsHost()) {
          return;
       }
 
@@ -1435,7 +1626,17 @@ class ModLobby {
 
    // MenuOnline.Tick : fait à la place du joueur ce qu'il ferait à la souris
    static void AutoMenuFrame() {
-      if (m_nAuto != 1 && m_nAuto != 2 && m_nAuto != 4 || m_nNet != _NET_ONLINE) {
+      if (m_nAuto != 1 && m_nAuto != 2 && m_nAuto != 4 && m_nAuto != 7 || m_nNet != _NET_ONLINE) {
+         return;
+      }
+
+      if (m_nAuto == 7) {
+         // spectateur : regarde le premier match de la liste, NetMatches fois
+         m_bLiveView = true;
+         if (m_nAutoMatches > 0 && m_sRoom == null && m_nWant == _WANT_NONE && m_bLiveKnown && m_nLiveCount > 0) {
+            Watch(m_tLiveCode[0]);
+         }
+
          return;
       }
 

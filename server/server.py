@@ -73,7 +73,7 @@ class Server:
         self.verbose = verbose
         self.delayed = []  # (heure d'envoi, n° d'ordre, paquet, adresse)
         self.order = itertools.count()
-        self.stats = dict(recv=0, relayed=0, lost=0)
+        self.stats = dict(recv=0, relayed=0, lost=0, spectated=0)
         lobby.log = self.log
 
     def log(self, text):
@@ -117,6 +117,12 @@ class Server:
                    elo=player.elo if player else 0, games=player.games if player else 0,
                    online=len(self.lobby.sessions), result=session.result,
                    queue_range=self.lobby.accepted_gap(session, self.lobby.now) if queued else 0, secret=session.secret)
+        watched = session.watching
+        if watched is not None:
+            host, guest = watched.host, watched.guest
+            return P.make_info(seq, P.STATUS_OK, watched.code, P.ROLE_SPECTATOR, watched.members(), host.name,
+                               peer_elo=host.player.elo if host.player else 0, spectators=len(watched.spectators),
+                               peer2_name=guest.name if guest else "", **own)
         if room is None:
             return P.make_info(seq, P.STATUS_OK, **own)
         peer = room.peer(session)
@@ -128,7 +134,8 @@ class Server:
         key, peer_addr, peer_local = self.lobby.link(session)
         return P.make_info(seq, P.STATUS_OK, room.code, role, room.members(), peer.name if peer else "",
                            peer_elo=peer.player.elo if peer and peer.player else 0,
-                           key=key, peer_addr=peer_addr, peer_local=peer_local, **own)
+                           key=key, peer_addr=peer_addr, peer_local=peer_local,
+                           spectators=len(room.spectators), spectator_joins=room.spectator_joins, **own)
 
     def ranks(self, session):
         """Le haut du classement et le rang du joueur."""
@@ -204,8 +211,21 @@ class Server:
                 self.relay(data, peer.addr, now)
             return
 
+        if ptype == P.PKT_SPEC_SNAP:
+            # Copie de l'état du match pour les spectateurs : seul l'hôte du salon l'envoie, le serveur la distribue.
+            # L'hôte n'en envoie qu'une, quel que soit le nombre de spectateurs (il les voit dans PKT_INFO).
+            session = lobby.by_addr.get(addr)
+            room = session.room if session is not None else None
+            if room is None or room.host is not session:
+                return
+            session.last_seen = now
+            for spectator in room.spectators:
+                self.stats["spectated"] += 1
+                self.relay(data, spectator.addr, now)
+            return
+
         if ptype not in (P.PKT_HELLO, P.PKT_CREATE, P.PKT_JOIN, P.PKT_LEAVE, P.PKT_STATE, P.PKT_QUEUE, P.PKT_MATCH,
-                         P.PKT_TOP, P.PKT_LEAGUE, P.PKT_MATCH_STATS):
+                         P.PKT_TOP, P.PKT_LEAGUE, P.PKT_MATCH_STATS, P.PKT_LIVE, P.PKT_SPECTATE):
             return
         if not self.packets.allow(addr[0], now):
             self.refused += 1
@@ -241,10 +261,19 @@ class Server:
             join_error = lobby.join(session, P.read_join(data), now)
         elif ptype == P.PKT_LEAVE:
             lobby.leave(session)
+        elif ptype == P.PKT_SPECTATE:
+            join_error = lobby.spectate(session, *P.read_spectate(data))
+        elif ptype == P.PKT_LIVE:
+            self.send(P.make_live_list(lobby.live_matches()), addr)
         elif ptype == P.PKT_STATE:
             peer = lobby.peer(session)
             if peer is not None:
                 self.relay(P.make_peer(data[P.LOBBY_HEAD_SIZE:]), peer.addr, now)
+            room = session.room
+            if room is not None and room.host is session:
+                # les spectateurs chargent le match de l'hôte comme l'invité : stade, équipes, numéro du match
+                for spectator in room.spectators:
+                    self.relay(P.make_peer(data[P.LOBBY_HEAD_SIZE:]), spectator.addr, now)
             try:
                 lobby.set_state(session, P.read_state(data[P.LOBBY_HEAD_SIZE:]))
             except (ValueError, struct.error):
@@ -332,10 +361,10 @@ class Server:
                     self.log("limites : %d paquets écartés en 10 s" % self.refused)
                     self.refused = 0
                 if self.verbose and self.stats["recv"]:
-                    self.log("10 s : %d paquets reçus, %d relayés (%d perdus exprès), %d joueurs, %d salons, %d en attente" % (
-                        self.stats["recv"], self.stats["relayed"], self.stats["lost"],
+                    self.log("10 s : %d paquets reçus, %d relayés (%d perdus exprès), %d aux spectateurs, %d joueurs, %d salons, %d en attente" % (
+                        self.stats["recv"], self.stats["relayed"], self.stats["lost"], self.stats["spectated"],
                         len(self.lobby.sessions), len(self.lobby.rooms), len(self.lobby.queue)))
-                self.stats = dict(recv=0, relayed=0, lost=0)
+                self.stats = dict(recv=0, relayed=0, lost=0, spectated=0)
 
 
 def open_socket(host, port):
@@ -385,6 +414,8 @@ def main():
     ap.add_argument("--no-direct", action="store_true", help="tout le match passe par le serveur : pas de liaison directe entre les jeux")
     ap.add_argument("--max-sessions", type=int, default=5000, help="jeux connus en même temps, en tout")
     ap.add_argument("--ip-sessions", type=int, default=16, help="jeux connus en même temps depuis une même adresse IP")
+    ap.add_argument("--max-spectators", type=int, default=8,
+                    help="spectateurs par match classé ou de ligue (chacun coûte au serveur environ 16 Ko/s)")
     ap.add_argument("--ip-rate", type=float, default=60,
                     help="paquets de salon par seconde et par adresse IP (le double d'un coup) ; 0 : sans limite")
     ap.add_argument("--ip-hello", type=float, default=2,
@@ -402,7 +433,7 @@ def main():
                   queue_range=args.queue_range, queue_grow=args.queue_grow,
                   # un retard ou des pertes simulés ne touchent que les paquets relayés : pas de liaison directe alors
                   direct=not (args.no_direct or args.lag or args.jitter or args.loss),
-                  max_sessions=args.max_sessions, ip_sessions=args.ip_sessions)
+                  max_sessions=args.max_sessions, ip_sessions=args.ip_sessions, max_spectators=args.max_spectators)
     lobby.leagues = Leagues(store.db, fixed_code=args.league_code.strip().upper() if args.league_code else None,
                             delay_scale=args.league_minute, grace=args.league_grace * 60)
     sock = open_socket(args.host, args.port)

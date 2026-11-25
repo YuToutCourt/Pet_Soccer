@@ -35,6 +35,10 @@
   -Golden  : avec -League, but en or à égalité dans les matchs entre les deux jeux, même hors playoffs
   -NoSkip  : les jeux automatiques (-Bot, -HostBot) ne cliquent pas « continuer » à la mi-temps : la pause va
              au bout de son temps (HalfBreak de online.scr, 30 s)
+  -Spectate : avec -Ranked ou -League, un troisième jeu (game_dev_c, mods\build.ps1 -Third) regarde le match en
+             spectateur : il ouvre la liste des matchs en cours, prend le premier, puis revient à la liste.
+  -SpectateAt : avec -Spectate, le spectateur n'est lancé que ce nombre de secondes après les deux joueurs
+             (arrivée en plein match)
 
   Les comptes, l'Elo et les matchs de ces tests vont dans la base Postgres de test pet_soccer_test
   (server\testdb.py : le Postgres de docker-compose.yml, ou TEST_DATABASE_URL), jamais dans celle du vrai
@@ -48,7 +52,7 @@
 param([switch]$Bot, [switch]$HostBot, [int]$Port = 7777, [int]$Half = 0, [switch]$Server, [switch]$Menus,
       [switch]$Ranked, [int]$Lag = 0, [int]$Loss = 0, [int]$Matches = 1, [string]$TeamA = '', [string]$TeamB = '',
       [int]$QuitAt = 0, [switch]$NoDirect, [switch]$NoSkip, [switch]$CutDirect, [switch]$League, [switch]$Golden, [switch]$NoCode,
-      [switch]$ResetDb)
+      [switch]$ResetDb, [switch]$Spectate, [int]$SpectateAt = 0)
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -60,6 +64,9 @@ $nl   = "`r`n"
 if (-not (Test-Path $DevB)) { throw 'game_dev_b manque : lance d''abord mods\build.ps1 -Second' }
 if (Get-Process 'PetSoccer.bum' -ErrorAction SilentlyContinue) { throw 'Pet Soccer est ouvert : ferme le jeu d''abord.' }
 if (@($Server, $Menus, $Ranked, $League | Where-Object { $_ }).Count -gt 1) { throw '-Server, -Menus, -Ranked et -League ne vont pas ensemble.' }
+$DevC = Join-Path $Root 'game_dev_c'
+if ($Spectate -and -not ($Ranked -or $League)) { throw '-Spectate : seulement avec -Ranked ou -League (on ne regarde pas un salon privé).' }
+if ($Spectate -and -not (Test-Path $DevC)) { throw 'game_dev_c manque : lance d''abord mods\build.ps1 -Third' }
 
 function Write-DebugConf([string]$Dir, [string[]]$Lines) {
     # Les déclarations !Mot(types) doivent précéder les valeurs, sinon le parseur les ignore
@@ -152,6 +159,14 @@ try {
     Start-Sleep -Seconds 3
     Write-Host '[client] game_dev_b (équipe de droite)'
     Start-Process (Join-Path $DevB 'PetSoccer.exe') -WorkingDirectory $DevB
+    if ($Spectate) {
+        # le spectateur ouvre la liste des matchs en cours et regarde le premier (NetAuto 7)
+        Write-DebugConf $DevC @('MenuOn(1)', "NetServer(`"127.0.0.1`", $Port)", 'NetName("spectateur")', 'NetAuto(7)', 'NetMatches(1)')
+        Set-Windowed $DevC
+        if ($SpectateAt -gt 0) { Start-Sleep -Seconds $SpectateAt }
+        Write-Host '[spectateur] game_dev_c'
+        Start-Process (Join-Path $DevC 'PetSoccer.exe') -WorkingDirectory $DevC
+    }
 
     if ($Menus) {
         Write-Host 'Dans chaque fenêtre : « en ligne », puis « créer » dans l''une et le code + « rejoindre » dans l''autre.'

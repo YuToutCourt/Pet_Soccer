@@ -13,9 +13,9 @@ import socket
 import struct
 
 MAGIC = 0x50534E31  # "PSN1"
-LOBBY_PROTO = 6  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne ; 5 : statistiques ;
-#                   6 : secret de session, paquets complétés à LOBBY_MIN_SIZE
-LOBBY_PROTOS = (6,)  # versions acceptées : les jeux d'avant le secret de session sont refusés (« pas la même version »)
+LOBBY_PROTO = 7  # version du dialogue jeu <-> serveur (ModLobby._LOBBY_PROTO) ; 4 : ligue en ligne ; 5 : statistiques ;
+#                   6 : secret de session, paquets complétés à LOBBY_MIN_SIZE ; 7 : spectateurs
+LOBBY_PROTOS = (7,)  # versions acceptées : un jeu d'une autre version voit « pas la même version »
 LOBBY_MIN_SIZE = 96  # taille minimale d'un paquet jeu -> serveur (le jeu complète par des zéros) ; plus court : ignoré
 
 # Paquets du match (ModNet) : le serveur les recopie tels quels vers l'autre joueur du salon
@@ -23,6 +23,8 @@ PKT_INPUT = 1
 PKT_SNAP = 2
 PKT_BYE = 3
 PKT_PUNCH = 4  # sonde de la liaison directe : va d'un jeu à l'autre, jamais par le serveur
+PKT_SPEC_SNAP = 5  # copie de l'état du match pour les spectateurs : jeu de l'hôte -> serveur -> chaque spectateur.
+#                    Même format que PKT_SNAP, avec les événements récents, confirmés ou pas (ModNet)
 
 # Jeu -> serveur. Tous commencent par : identifiant du jeu (int), numéro du paquet (int), secret de session (int non
 # signé, donné par PKT_INFO) ; sauf PKT_HELLO, où le secret vient après la version du dialogue (elle reste au même
@@ -42,12 +44,18 @@ PKT_TOP = 23  # demande le classement
 PKT_LEAGUE = 24  # ligue en ligne : + commande (octet LG_*), version de l'état de la ligue que le jeu a déjà (int), suite
 PKT_MATCH_STATS = 25  # le jeu de l'hôte, à la fin d'un match en ligne : ses statistiques (read_match_stats). Redit avec
 #                       PKT_MATCH tant que le serveur n'a pas tranché ; le serveur ne garde que le premier.
+PKT_LIVE = 26  # demande la liste des matchs qu'on peut regarder (classés et de ligue), réponse PKT_LIVE_LIST
+PKT_SPECTATE = 27  # + code du salon (chaîne), numéro du match dont le stade est chargé chez le spectateur (int, 0 :
+#                    aucun). Redit tant qu'on regarde ; PKT_LEAVE arrête. Refus dans PKT_INFO (JOIN_UNKNOWN, JOIN_FULL,
+#                    JOIN_VERSION). Un spectateur qui arrive, ou dont le stade vient d'être chargé, fait tourner le
+#                    compteur d'arrivées que l'hôte lit dans PKT_INFO : il lui envoie alors l'état durable du match.
 
 # Serveur -> jeu
 PKT_INFO = 32  # réponse à chaque paquet ci-dessus
 PKT_PEER = 33  # le contenu du dernier PKT_STATE de l'autre joueur
 PKT_RANKS = 34  # le classement, en réponse à PKT_TOP
 PKT_LEAGUE_INFO = 35  # réponse à PKT_LEAGUE : la ligue du joueur (make_league_info)
+PKT_LIVE_LIST = 36  # réponse à PKT_LIVE : les matchs en cours qu'on peut regarder (make_live_list)
 
 # PKT_LEAGUE, commandes. Chacune est redite par le jeu jusqu'à ce que la réponse la confirme : elles ne font
 # rien de plus quand on les répète.
@@ -99,12 +107,15 @@ STATUS_BUSY = 3  # trop de jeux connectés (en tout, ou depuis cette adresse IP)
 ROLE_NONE = 0
 ROLE_HOST = 1
 ROLE_GUEST = 2
+ROLE_SPECTATOR = 3  # regarde le match du salon (PKT_SPECTATE) : peer_name est le nom de l'hôte, peer2_name de l'invité
 
 # PKT_INFO, refus d'un PKT_JOIN
 JOIN_OK = 0
 JOIN_UNKNOWN = 1  # aucun salon avec ce code
 JOIN_FULL = 2  # le salon a déjà deux joueurs
 JOIN_VERSION = 3  # l'hôte du salon n'a pas la même version du mod
+# PKT_SPECTATE : JOIN_UNKNOWN aussi pour un salon privé (on n'y regarde pas), JOIN_FULL quand les places de
+# spectateurs sont prises.
 
 # PKT_INFO, drapeaux
 INFO_QUEUED = 1  # le joueur est dans la file d'attente
@@ -129,6 +140,8 @@ HOW_PEER_FORFEIT = 2  # forfait de l'autre joueur
 HOW_MY_FORFEIT = 3  # mon forfait
 
 TOP_ROWS = 8  # lignes de classement dans un PKT_RANKS (MenuOnline._TOP_ROWS)
+LIVE_ROWS = 8  # matchs dans un PKT_LIVE_LIST
+LIVE_LEAGUE = 1  # PKT_LIVE_LIST, drapeau d'un match : match de ligue (sinon partie classée)
 
 _HEAD = struct.Struct(">IB")
 _HELLO_HEAD = struct.Struct(">IBii")  # PKT_HELLO : sans le secret
@@ -136,7 +149,9 @@ _LOBBY_HEAD = struct.Struct(">IBiiI")  # les autres : avec le secret
 _INFO_TAIL = struct.Struct(">BBhhhhiBBh")
 # ... puis la liaison directe et la file d'attente : clé du salon (int), adresse (4 octets) et port (short non signé)
 # de l'autre joueur vus par le serveur, son adresse et son port locaux, écart d'Elo accepté dans la file (short),
-# secret de session du jeu (int non signé)
+# secret de session du jeu (int non signé) ; puis (dialogue 7) les spectateurs du salon (octet), leurs arrivées
+# (octet, compteur qui tourne : l'hôte remet alors les spectateurs à niveau), et pour un spectateur le nom de
+# l'invité (chaîne, vide sinon)
 NO_ADDR = ("0.0.0.0", 0)
 HEAD_SIZE = _HEAD.size
 HELLO_HEAD_SIZE = _HELLO_HEAD.size
@@ -217,6 +232,17 @@ def read_hello(data):
 def read_join(data):
     code, _ = get_string(data, LOBBY_HEAD_SIZE)
     return code
+
+
+def read_spectate(data):
+    """Renvoie (code du salon, numéro du match chargé chez le spectateur)."""
+    code, off = get_string(data, LOBBY_HEAD_SIZE)
+    (ready,) = struct.unpack_from(">i", data, off)
+    return code, ready
+
+
+def make_spectate(code, ready=0):
+    return put_string(code) + struct.pack(">i", ready)
 
 
 def read_match(data):
@@ -349,15 +375,18 @@ def make_match_stats(match_id, teams, golden_goal=False, heat_size=(12, 8)):
 
 def make_info(seq, status, code="", role=ROLE_NONE, members=0, peer_name="", join_error=JOIN_OK, flags=0,
               elo=0, games=0, peer_elo=0, online=0, result=(0, RESULT_NONE, 0, 0),
-              key=0, peer_addr=NO_ADDR, peer_local=NO_ADDR, queue_range=0, secret=0):
+              key=0, peer_addr=NO_ADDR, peer_local=NO_ADDR, queue_range=0, secret=0, spectators=0, spectator_joins=0,
+              peer2_name=""):
     """result = (numéro du match, issue RESULT_*, façon HOW_*, variation d'Elo).
     key, peer_addr, peer_local : liaison directe (rooms.Lobby.link). queue_range : écart d'Elo accepté.
-    secret : secret de session du jeu (0 dans un refus)."""
+    secret : secret de session du jeu (0 dans un refus). spectators, spectator_joins : spectateurs du salon et
+    compteur de leurs arrivées. peer2_name : pour un spectateur, le nom de l'invité (peer_name est celui de l'hôte)."""
     return (_HEAD.pack(MAGIC, PKT_INFO) + struct.pack(">iB", seq, status) + put_string(code)
             + bytes([role, members]) + put_string(peer_name)
             + _INFO_TAIL.pack(join_error, flags, elo, games, peer_elo, online, result[0], result[1], result[2], result[3])
             + struct.pack(">i", key) + put_addr(peer_addr) + put_addr(peer_local)
-            + struct.pack(">hI", max(0, min(32767, int(queue_range))), secret))
+            + struct.pack(">hI", max(0, min(32767, int(queue_range))), secret)
+            + bytes([min(255, spectators), spectator_joins & 0xFF]) + put_string(peer2_name))
 
 
 def make_peer(payload):
@@ -369,6 +398,19 @@ def make_ranks(my_rank, total, rows):
     out = _HEAD.pack(MAGIC, PKT_RANKS) + struct.pack(">hhB", my_rank, total, len(rows))
     for rank, name, elo, wins, draws, losses in rows:
         out += struct.pack(">h", rank) + put_string(name) + struct.pack(">hhhh", elo, wins, draws, losses)
+    return out
+
+
+def make_live_list(rows):
+    """rows = [dict(code, host, guest, host_elo, guest_elo, host_animal, guest_animal, score_host, score_guest,
+    spectators, league)], LIVE_ROWS au plus."""
+    rows = rows[:LIVE_ROWS]
+    out = _HEAD.pack(MAGIC, PKT_LIVE_LIST) + bytes([len(rows)])
+    for r in rows:
+        out += (put_string(r["code"]) + put_string(r["host"]) + put_string(r["guest"])
+                + struct.pack(">hhBBBBBB", r["host_elo"], r["guest_elo"], r["host_animal"] & 0xFF,
+                              r["guest_animal"] & 0xFF, min(255, r["score_host"]), min(255, r["score_guest"]),
+                              min(255, r["spectators"]), LIVE_LEAGUE if r["league"] else 0))
     return out
 
 
@@ -477,7 +519,9 @@ def read_info(data):
     peer_addr, off = get_addr(data, off + 4)
     peer_local, off = get_addr(data, off)
     queue_range, secret = struct.unpack_from(">hI", data, off)
-    return dict(secret=secret, key=key, peer_addr=peer_addr, peer_local=peer_local, queue_range=queue_range, seq=seq, status=status, code=code, role=role, members=members, peer_name=peer_name,
+    spectators, spectator_joins = data[off + 6], data[off + 7]
+    peer2_name, off = get_string(data, off + 8)
+    return dict(spectators=spectators, spectator_joins=spectator_joins, peer2_name=peer2_name, secret=secret, key=key, peer_addr=peer_addr, peer_local=peer_local, queue_range=queue_range, seq=seq, status=status, code=code, role=role, members=members, peer_name=peer_name,
                 join_error=join_error, queued=bool(flags & INFO_QUEUED), ranked=bool(flags & INFO_RANKED),
                 league=bool(flags & INFO_LEAGUE),
                 elo=elo, games=games, peer_elo=peer_elo, online=online,
@@ -515,6 +559,21 @@ def make_league(client_id, seq, cmd, known=0, settings=None, animal=0, clothes=0
     elif cmd == LG_PLAY:
         body += struct.pack(">i", key)
     return make_lobby(PKT_LEAGUE, client_id, seq, body, secret)
+
+
+def read_live_list(data):
+    count = data[HEAD_SIZE]
+    off = HEAD_SIZE + 1
+    rows = []
+    for _ in range(count):
+        code, off = get_string(data, off)
+        host, off = get_string(data, off)
+        guest, off = get_string(data, off)
+        he, ge, ha, ga, sh, sg, spec, flags = struct.unpack_from(">hhBBBBBB", data, off)
+        off += 10
+        rows.append(dict(code=code, host=host, guest=guest, host_elo=he, guest_elo=ge, host_animal=ha, guest_animal=ga,
+                         score_host=sh, score_guest=sg, spectators=spec, league=bool(flags & LIVE_LEAGUE)))
+    return rows
 
 
 def read_league_info(data):

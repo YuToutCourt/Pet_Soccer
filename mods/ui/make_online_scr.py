@@ -1,7 +1,8 @@
 # Génère l'écran « en ligne » (data/menu/scr/Online{640,,1024}.scr), lu par MenuOnline :
 # - cadre « salon » à gauche : état du serveur, code du salon (champ de saisie), trois boutons dont MenuOnline change le
 #   texte (« créer » / « rejoindre » / « ligue » hors salon, « équipe » / « tactique » dans un salon, le troisième caché),
-#   puis stade et durée (« < valeur > ») ;
+#   puis stade et durée (« < valeur > ») ; hors salon, un quatrième bouton (« regarder » / « classement ») remplace
+#   la ligne « durée » ;
 # - cadre « match » à droite : logo, équipe, nom et état de l'hôte et de l'invité, puis 3 lignes de message ;
 #   hors salon le cadre s'appelle « classement » et montre 8 lignes de classement et celle du joueur ;
 # - boutons ID_OK (« partie rapide » / « prêt » / « jouer ») et ID_CANCEL (« retour » / « annuler » / « quitter ») en bas.
@@ -182,6 +183,9 @@ def build(res):
     ]
     left += row(trigger, value_deco, roman, "STADIUM", "&&OnlineStadium&&", 0.73)
     left += row(trigger, value_deco, roman, "TIME", "&&OnlineTime&&", 0.85)
+    # hors salon, à la place de la ligne « durée » (cachée) : « regarder » / « classement », qui fait montrer au
+    # cadre de droite les matchs en cours ; la ligne « stade » sert alors à choisir le match (« < 2 / 3 > »)
+    left.append(clone(button, "UIButtonFlying", "ID_OK", "ID_ACTION4", "&&OnlineWatch&&", (0.0, 0.835), (ACTION_WIDTH, ACTION_HEIGHT)))
 
     # cadre droit : l'hôte sur la moitié gauche, l'invité sur la moitié droite, puis les messages.
     # Positions = fraction du cadre (0,5325 de large), tailles = fraction de l'écran.

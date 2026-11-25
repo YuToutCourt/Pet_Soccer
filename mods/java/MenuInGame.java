@@ -275,8 +275,11 @@ public class MenuInGame extends SoccerUserInterface {
       // « recommencer » est réservé à l'hôte ; « tactique » (à la mi-temps) demande un salon, par où la
       // composition part chez l'hôte
       boolean bClient = ModNet.IsClient();
-      boolean bClientTactics = bClient && ModLobby.IsOpen() && !ModNet.m_bHostLost;
-      ((UIButton)this.GetElem("ID_CONTINUE")).SetDisabled(this.m_bMatchEnd || bClient && ModNet.m_bHostLost || this.IsHalfBreakDone());
+      // [mod] spectateur : rien ne part chez l'hôte ; « continuer » ne ferme que son propre menu (échap)
+      boolean bSpectator = ModNet.IsSpectator();
+      boolean bClientTactics = bClient && !bSpectator && ModLobby.IsOpen() && !ModNet.m_bHostLost;
+      ((UIButton)this.GetElem("ID_CONTINUE")).SetDisabled(this.m_bMatchEnd || bClient && ModNet.m_bHostLost || this.IsHalfBreakDone()
+         || bSpectator && !ModNet.m_bLocalMenu);
       // [mod] survie : pas de « recommencer », qui permettrait de rejouer une manche perdue
       // [mod] ligue : idem, le résultat est déjà enregistré à la fin du match
       // [mod] partie classée : idem, le match compte pour l'Elo en ligne
@@ -332,7 +335,13 @@ public class MenuInGame extends SoccerUserInterface {
       this.m_cEloRank.SetTextColor(1.0F, 0.82F, 0.25F);
       this.m_cEloValue.SetText(nLeft + " s");
       this.m_cEloValue.SetTextColor(1.0F, 1.0F, 1.0F);
-      if (bMine) {
+      if (ModNet.IsSpectator()) {
+         // [mod] spectateur : seulement le temps avant la reprise, les joueurs décident
+         this.m_cEloDelta.SetText(Text.Get("&OnlineSpecHalf&"));
+         this.m_cEloDelta.SetTextColor(0.85F, 0.85F, 0.85F);
+         ((UIButton)this.GetElem("ID_CONTINUE")).SetDisabled(true);
+         return;
+      } else if (bMine) {
          this.m_cEloDelta.SetText(Text.Get("&OnlineWaiting&"));
          this.m_cEloDelta.SetTextColor(0.85F, 0.85F, 0.85F);
       } else if (bTheirs) {
