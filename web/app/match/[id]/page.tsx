@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
@@ -90,7 +91,10 @@ async function MatchDetail({ params }: { params: PageProps<"/match/[id]">["param
               ) : (
                 <ol className="relative space-y-1.5 before:absolute before:inset-y-0 before:left-1/2 before:w-px before:bg-line">
                   {timeline.map((e) => {
-                    const label = e.kind === "goal" ? `⚽ ${e.who ?? "But"}` : e.kind === "own_goal" ? `⚽ ${e.who} (csc)` : `⚡ Super ${e.super_type ?? ""}`;
+                    const superImg = e.kind === "super" && e.super_type != null
+                      ? <Image src={`/img/supers/super_${e.super_type}.png`} alt={`Super ${e.super_type}`} width={48} height={19} className="inline-block" unoptimized />
+                      : null;
+                    const label = e.kind === "goal" ? `⚽ ${e.who ?? "But"}` : e.kind === "own_goal" ? `⚽ ${e.who} (csc)` : superImg ?? `⚡ Super ${e.super_type ?? ""}`;
                     const goal = e.kind !== "super";
                     return (
                       <li key={e.seq} className="relative grid grid-cols-[1fr_3rem_1fr] items-center gap-2 text-sm">
