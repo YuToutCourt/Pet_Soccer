@@ -10,7 +10,9 @@
             à deux sur le même PC (ses sauvegardes, son debugconf.scr et ses réglages vidéo lui restent propres)
   -Third  : de même dans game_dev_c, un troisième jeu qui regarde le match en spectateur (online-test.ps1 -Spectate)
 #>
-param([switch]$Clean, [switch]$Run, [switch]$Second, [switch]$Third)
+param([switch]$Clean, [switch]$Run, [switch]$Second, [switch]$Third, [string]$Out = '')
+#  -Out <dossier> : construit dans ce dossier au lieu de game_dev (créé depuis game_pristine s'il manque), avec ses
+#                   propres classes compilées : pour les matchs de méta (mods\meta), sans toucher à game_dev
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -20,11 +22,27 @@ $Pristine = Join-Path $Root 'game_pristine'
 $Dev      = Join-Path $Root 'game_dev'
 $Javac    = Join-Path $Root 'tools\jdk8\bin\javac.exe'
 $Classes  = Join-Path $Root 'build\classes'
+if ($Out) {
+    if ($Second -or $Third) { throw '-Out ne va pas avec -Second / -Third' }
+    # chemin relatif : par rapport au dossier courant de PowerShell (GetFullPath seul suit celui du processus)
+    $Dev = [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Out))
+    $Classes = Join-Path $Root ('build\classes_' + (Split-Path -Leaf $Dev))
+    if (-not (Test-Path $Dev)) {
+        Write-Host "[out] $Dev <- game_pristine"
+        robocopy $Pristine $Dev /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "robocopy a échoué ($LASTEXITCODE)" }
+    }
+}
 $JavaSrc  = Join-Path $PSScriptRoot 'java'
 $DataSrc  = Join-Path $PSScriptRoot 'data'
 
-# Le jeu verrouille code.pak : un build lancé jeu ouvert laisserait game_dev à moitié construit
-if (Get-Process 'PetSoccer.bum' -ErrorAction SilentlyContinue) {
+# Le jeu verrouille code.pak : un build lancé jeu ouvert laisserait game_dev à moitié construit.
+# Seul le jeu de game_dev compte (un jeu de game_dev_b ou game_dev_c ouvert ne gêne pas, sauf avec -Second / -Third).
+$open = @(Get-Process 'PetSoccer.bum' -ErrorAction SilentlyContinue | Where-Object {
+    $p = $_.Path
+    $p -and ($p -like "$Dev\*" -or ($Second -and $p -like "$Root\game_dev_b\*") -or ($Third -and $p -like "$Root\game_dev_c\*"))
+})
+if ($open.Count -gt 0) {
     throw 'Pet Soccer est ouvert : ferme le jeu avant de lancer le build.'
 }
 

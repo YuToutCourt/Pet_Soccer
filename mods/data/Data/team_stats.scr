@@ -1,16 +1,39 @@
 // Stats des equipes (mod) - lu par ETeams au demarrage, sans recompiler.
 // Team("Animal", Force, Precision, Reflexe)   90 = valeur neutre, on peut depasser 100
-//   Force     -> puissance des tirs
+//   Force     -> puissance des tirs, portee de tir, tirs droits en hauteur plutot que lobs (ForceEffects)
 //   Precision -> ecart gauche-droite des tirs (plus haut = plus precis ; la hauteur ne change pas)
 //   Reflexe   -> vitesse de deplacement (gardien compris)
 // Barres du menu : 100 = 5 points, 95 = 4, 90 = 3, 85 = 2, 80 = 1 (plus de 100 = barre pleine).
 //
 // Effects(a, b, c) : effet en % par point d'ecart a 90
 //   a = puissance des tirs, b = dispersion, c = vitesse.
-//   Ex. Force 110 avec a=1 -> tirs 20 % plus forts ; Precision 110 avec b=2 -> 40 % de dispersion en moins.
+//   Ex. Force 110 avec a=1 -> tirs 20 % plus forts ; Precision 110 avec b=2.5 -> 50 % de dispersion en moins ;
+//   Reflexe 100 avec c=0.7 -> 7 % plus rapide.
 //
-// Equilibrage (2026-11-25), voir notes/team-stats.md :
-//   valeur = (Force-90) + (Precision-90) + 2 x (Reflexe-90) + bonus hitbox = 10 pour chaque equipe
+// ForceEffects(a, c) : effets de la Force en plus de la puissance, en % par point d'ecart a 90
+//   a = portee de tir (distance max a laquelle on peut tirer, 2500 de base), seulement au-dessus de 90 :
+//       Force 110 avec a=0.5 -> +10 % (tire de plus loin) ; Force 90 ou moins -> portee d'origine
+//   c = limite tir droit / lob (un tir vise au-dessus de 70 de haut part en lob), seulement au-dessus de 90 :
+//       Force 105 avec c=1.5 -> 86 de haut : un peu plus de tirs droits en hauteur, un peu moins de lobs.
+//       La hauteur visee ne change pas : pas plus de tirs au-dessus de la barre.
+//   La precision ne change pas : un tir de loin reste aussi disperse, il est seulement autorise.
+//
+// KeeperMinReach(h) : hauteur minimale prise en compte pour un gardien (arret et saut). Aide les petits gardiens
+//   sur les tirs hauts sans toucher a leur largeur ni aux joueurs de champ. 0 = taille du modele.
+//   Robot 57, Gorille 72.5, Panthere/Tigre 74, Poule 76, Tortue 77.4, Grenouille 83.6, Requin 84, Taureau 85,
+//   Lion 88, Ours/Panda 100, Dino 105, Girafe 147.
+//
+// KeeperMinWidth(w) : largeur minimale prise en compte pour un gardien (distance a laquelle il arrete le ballon sur
+//   le cote). Ajoute apres la serie 2 : la largeur du modele faisait encore l'ecart des arrets (56 % a 86 %).
+//   La hitbox, le tacle et la reception des joueurs ne changent pas. 0 = taille du modele.
+//   Robot 45, Requin 48, Tortue 51, Grenouille 55, Ours/Panda 59.5, Poule/Panthere/Tigre 60, Lion 62,
+//   Girafe 90, Dino 100, Taureau 101, Gorille 110.
+//
+// Equilibrage (2026-11-25, revu le 2026-11-27 apres 910 matchs de meta), voir notes/team-stats.md :
+//   valeur = (Force-90) + (Precision-90) + 2 x (Reflexe-90) + bonus hitbox = 10 pour chaque equipe (jusqu a la serie 3)
+//   Serie 3 (836 matchs, 2026-11-27, notes/meta.md) : la taille du gardien pese plus que la formule. Retouches :
+//   Dino R 85->83, Girafe F 95->90 P 91->88 (tire moins loin : jeu a construire), Panthere F 84->88,
+//   Requin P/R 90->92, Tortue R 83->88, Robot F 80->84 R 95->97, Panda P 85->89.
 //   La vitesse compte double (elle sert a tous les joueurs, tout le match).
 //   Bonus hitbox = 0,8 x (rayon - 30), rayon = largeur du modele / 2 (code en dur dans AI<Animal>.UpdateExtents) :
 //   il agrandit la portee de reception (30 + rayon + rayon du ballon, ReceiveRadius d'ai_params.scr) et de tacle (110 + rayon).
@@ -20,21 +43,27 @@
 
 !Team(s,i,i,i)
 !Effects(f,f,f)
+!ForceEffects(f,f)
+!KeeperMinReach(f)
+!KeeperMinWidth(f)
 
-Effects(1.0, 2.0, 0.8)
+Effects(1.0, 2.5, 0.7)
+ForceEffects(0.5, 1.5)
+KeeperMinReach(95)
+KeeperMinWidth(90)
 
 //    Animal       Force  Precision  Reflexe    hitbox  profil
 Team("Bear",        95,     95,       90)    //   0    polyvalent
-Team("Bull",       110,     80,       82)    // +16    gros tireur lent
+Team("Bull",       105,     85,       82)    // +16    gros tireur lent
 Team("Chicken",     80,     90,      100)    //   0    rapide
-Team("Dino",       100,     84,       85)    // +16    costaud
+Team("Dino",       100,     84,       83)    // +16    costaud
 Team("Frog",        86,     86,      100)    //  -2    rapide
-Team("Giraffe",     95,     91,       80)    // +24    grand, jeu aerien
-Team("Gorilla",    100,     80,       85)    // +20    mur defensif
+Team("Giraffe",     90,     88,       80)    // +24    grand, jeu aerien
+Team("Gorilla",     95,     85,       85)    // +20    mur defensif
 Team("Lion",       100,    105,       82)    //  +1    finisseur
-Team("Panther",     84,    100,       93)    //   0    vif et precis
-Team("Shark",      110,     85,       90)    //  -5    frappeur
-Team("Turtle",     100,    114,       80)    //  -4    sniper lent
-Team("Robo",        80,    106,       95)    //  -6    petit, precis, rapide
-Team("Panda",      110,     80,       90)    //   0    puissant
-Team("Tiger",      100,     80,       95)    //   0    puissant et rapide
+Team("Panther",     88,    100,       93)    //   0    vif et precis
+Team("Shark",      105,     92,       92)    //  -5    frappeur
+Team("Turtle",     100,    108,       88)    //  -4    sniper lent
+Team("Robo",        84,    106,       97)    //  -6    petit, precis, rapide
+Team("Panda",      105,     89,       90)    //   0    puissant
+Team("Tiger",       95,     85,       95)    //   0    puissant et rapide

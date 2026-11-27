@@ -34,6 +34,19 @@
   Les niveaux 1 à 4 restent identiques au jeu d'origine tant que l'IA joue en ORIGINE.
 - `DebugLog(1)` dans `roles.scr` : rôles, positions, cibles et marquages dans `crash.log` toutes les 2 s.
 
+## Tactiques variées de l'IA (2026-11-27)
+- Demande : « que l'IA joue avec des tactiques différentes, ORIGINE ou les autres ». `AIVary(1)` dans `roles.scr`.
+- Début de match : chaque équipe IA tire un schéma, gardé tout le match (`ModTactics.DrawScheme`, cache
+  `m_tMatchSchemes` par `Team`). Avec la chance `AIFavorite` (0,4), son schéma préféré (`TeamScheme(animal, schéma)`,
+  un par équipe : Tortue et Panda en BÉTON, Taureau / Lion / Requin / Tigre en ATTAQUE, etc.), sinon tirage pondéré
+  `AISchemeWeight` (ORIGINE 3, les cinq autres 1).
+- Mi-temps : `AIAdapt(chance, retard, avance, si menée, si elle mène)` = `(0.7, 1, 2, "ATTAQUE", "BETON")`. Score suivi
+  par `ModTactics.OnGoal` (appelé dans `AIMatch.OnGoal`, équipe qui marque).
+- Pas de tirage : équipe du joueur, équipe distante en ligne, matchs de méta (`ModMeta.IsActive`) : la méta garde
+  `AIScheme` (ORIGINE) pour toutes les équipes, `TeamScheme` y est ignoré tant que `AIVary(1)`.
+- Journal : `[mod] tactique IA : animal n joue X` et `... passe de X a Y a la mi-temps (a-b)`.
+- Aux niveaux 1-4 (marquage 0), seul le placement change par rapport au jeu d'origine.
+
 ## Écran Tactique (`MenuTactics`, `Menu\scr\Tactics*.scr`)
 - Accès : bouton « Tactique » de l'avant-match (`MenuPreMatch`, écran 18 de `SoccerMainMenuModule`) et du menu
   pause (`MenuInGame` → `SoccerInGameMenuModule.ShowTactics`), **seulement à la mi-temps** : le bouton est grisé
@@ -228,9 +241,12 @@ k + 2, `ModTactics.GetNumbered`, repli sur l'ordre des points d'apparition en co
 **Numéros des joueurs** (`ModSwitch.UpdateNumbers`, appelé par `PetSoccerHud.OnFrame`) :
 - Sur la mini-carte, à droite du point de chaque joueur humain (`ID_MAPNUM_*`), activés par défaut (`MapNumbers` dans
   `switch.scr`). Choix de l'utilisateur : la caméra ne montre pas tous les joueurs, la mini-carte si.
-- Le chiffre affiché est le numéro Tactique - 1 (1 à 6), celui de la touche directe par défaut : demandé par
-  l'utilisateur (« j'appuie sur 2, ça va sur le 3 »). Texte posé par `make_hud_numbers_scr.py`, les identifiants
-  gardent le numéro Tactique.
+- Le texte affiché est le nom de la touche directe choisie pour ce joueur dans Options > Commandes
+  (`ModSwitch.GetLabelText`, `KbSettings.GetKeyString` raccourci : `Numpad7` → `N7`, `LControl` → `LCtrl`, manette
+  `Feu3`), jeu de touches de l'équipe (en ligne celui du joueur 1). Sans touche (joueur 2 par défaut), le numéro
+  Tactique - 1 (1 à 6), demandé par l'utilisateur (« j'appuie sur 2, ça va sur le 3 ») ; touche affichée demandée le
+  2026-11-25 (todo.md). Texte de départ posé par `make_hud_numbers_scr.py` (étiquettes élargies : 0,10 au-dessus des
+  têtes, 0,06 sur la mini-carte), les identifiants gardent le numéro Tactique.
 - Au-dessus des têtes (`ID_NUM_*`) : option « Numéros sur les joueurs » du menu Mods, désactivée par défaut
   (l'utilisateur ne les veut pas d'office). Hauteur `NumberHeight` (120, un joueur mesure environ 90), plus
   `NumberFocusExtra` pour le joueur contrôlé (au-dessus du losange d'origine).

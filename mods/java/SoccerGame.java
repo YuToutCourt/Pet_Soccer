@@ -148,6 +148,7 @@ public class SoccerGame extends Game {
 
       Game.SetLoadingOnCreatePercentage(0.1F);
       this.RegisterKeyRequest();
+      this.RegisterMouseButtonRequest(); // [mod] OnInputMouseButton, pour les champs de saisie (UIEdit)
       this.SetDefaultSoundRanges(1000.0F, 4000.0F);
       this.LoadSoundTemplates("Data/sounds.ini");
       GameObject.CrashLog(" ************************Loading settings**************************** ");
@@ -464,6 +465,29 @@ public class SoccerGame extends Game {
                ModLobby.m_nDebugDirect = key.GetIParam(0);
             }
 
+            // [mod] matchs de méta IA contre IA (ModMeta, notes/meta.md)
+            if (key.Equals("MetaMatch")) {
+               ModMeta.m_bActive = true;
+               ModMeta.m_nAnimalA = key.GetIParam(0);
+               ModMeta.m_nClothesA = key.GetIParam(1);
+               ModMeta.m_nAnimalB = key.GetIParam(2);
+               ModMeta.m_nClothesB = key.GetIParam(3);
+               ModMeta.m_nLevel = key.GetIParam(4);
+            }
+
+            if (key.Equals("MetaHalf")) {
+               ModMeta.m_nHalf = key.GetIParam(0);
+            }
+
+            if (key.Equals("MetaSpeed")) {
+               ModMeta.m_fSpeed = key.GetFParam(0);
+            }
+
+            if (key.Equals("MetaSchemes")) {
+               ModMeta.m_sSchemeA = key.GetSParam(0);
+               ModMeta.m_sSchemeB = key.GetSParam(1);
+            }
+
             if (key.Equals("NetNoSkip")) {
                ModNet.m_bNoSkip = key.GetIParam(0) == 1;
             }
@@ -674,7 +698,30 @@ public class SoccerGame extends Game {
       m_cObjectManager.ctFBallersCounter++;
    }
 
+   // [mod] boutons de la souris (RegisterMouseButtonRequest). La signature exacte attendue par le moteur n'est pas
+   // connue : les deux formes probables sont déclarées, le moteur appelle celle qui existe.
+   void OnInputMouseButton(int nButton, boolean bState) {
+      this.OnModMouseButton(nButton, bState ? 1 : 0);
+   }
+
+   void OnInputMouseButton(int nButton, int nState) {
+      this.OnModMouseButton(nButton, nState);
+   }
+
+   void OnModMouseButton(int nButton, int nState) {
+      if (m_bDebug) {
+         GameObject.CrashLog("[mod] souris : bouton " + nButton + " etat " + nState + "\n");
+      }
+
+      // bouton gauche relâché
+      if (nButton == 0 && nState == 0) {
+         UIEdit.OnGlobalClick();
+      }
+   }
+
    void OnInputKey(int nKeyCode, boolean bKeyState, char nKeyAscii) {
+      // [mod] le champ en saisie ne reçoit pas toujours les touches du moteur : on les lui passe d'ici (UIEdit)
+      UIEdit.OnGlobalKey(nKeyCode, bKeyState, nKeyAscii);
       CoreLogic log = GetCoreLogic();
       if (m_bDebug || m_bRecordingEnabled) {
          super.OnInputKey(nKeyCode, bKeyState, nKeyAscii);

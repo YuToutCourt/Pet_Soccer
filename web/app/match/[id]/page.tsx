@@ -4,10 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
+import Comparison from "@/components/Comparison";
 import { Delta, PageSkeleton, SectionTitle, TeamLogo } from "@/components/ui";
-import { HeatPitch, ShotPitch, TacticPitch, type TacticPlayer } from "@/components/Pitch";
+import { HeatPitch, TacticPitch, type TacticPlayer } from "@/components/Pitch";
+import { ShotPitch } from "@/components/ShotPitch";
 import { fmtDate, footballerName, KINDS, pct, ROLES, SCHEMES, team } from "@/lib/game";
-import { getMatch, type SidePlayer } from "@/lib/queries";
+import { getMatch } from "@/lib/queries";
 
 export const metadata: Metadata = { title: "Match" };
 
@@ -149,16 +151,16 @@ async function MatchDetail({ params }: { params: PageProps<"/match/[id]">["param
                   >
                     <TacticPitch players={players} color={t.color} id={`tac-${s.side}`} />
                   </PitchFigure>
-                  <PitchFigure title={`Tirs (${shots.length})`} help="Chaque point est un tir, à l'endroit d'où il est parti. Survole un point pour voir le tireur et la minute.">
+                  <PitchFigure title={`Tirs (${shots.length})`} help="Chaque point est un tir, à l'endroit d'où il est parti. Survole un point pour voir le tireur et la minute ; clique sur une issue sous la carte pour la cacher ou l'afficher.">
                     <ShotPitch shots={shots} animal={s.animal} id={`shot-${s.side}`} />
                   </PitchFigure>
                   {heat && (
                     <PitchFigure
                       title="Zones occupées par l'équipe"
-                      help={`Carte de chaleur : où se trouvaient les joueurs de ${s.name} pendant le match. Plus une zone est jaune vif, plus ils y ont passé de temps.`}
+                      help={`Carte de chaleur : où se trouvaient les joueurs de champ de ${s.name} pendant le match (sans le gardien, qui reste dans sa surface). Plus une zone est jaune vif, plus ils y ont passé de temps.`}
                       legend={<HeatLegend color="#ffd84a" />}
                     >
-                      <HeatPitch grid={heat} color="#ffd84a" label="Zones occupées par l'équipe" id={`heat-${s.side}`} />
+                      <HeatPitch grid={heat} color="#ffd84a" label="Zones occupées par l'équipe" id={`heat-${s.side}`} fieldScale />
                     </PitchFigure>
                   )}
                   {ball && (
@@ -261,46 +263,6 @@ function SideHead({ id, name, animal, delta }: { id: number | null; name: string
       )}
       <span className="hidden text-sm text-ink-dim sm:block">{team(animal).name}</span>
       {delta != null && <span className="text-sm"><Delta value={delta} suffix=" Elo" /></span>}
-    </div>
-  );
-}
-
-function Comparison({ host, guest }: { host: SidePlayer; guest: SidePlayer }) {
-  const rows: [string, number | null, number | null, string?][] = [
-    ["Possession", host.possession, guest.possession, " %"],
-    ["Tirs", host.shots, guest.shots],
-    ["Passes réussies", host.passes_ok, guest.passes_ok],
-    ["Précision des passes", pct(host.passes_ok, host.passes), pct(guest.passes_ok, guest.passes), " %"],
-    ["Récupérations", host.recoveries, guest.recoveries],
-    ["Arrêts", host.saves, guest.saves],
-    ["Supers", host.supers, guest.supers],
-  ];
-  return (
-    <div className="card p-5">
-      <SectionTitle>Statistiques</SectionTitle>
-      <div className="mb-3 flex items-center justify-between text-sm font-bold">
-        <span className="flex items-center gap-2"><i className="size-2.5 rounded-full bg-gold-300" />{host.name}</span>
-        <span className="flex items-center gap-2">{guest.name}<i className="size-2.5 rounded-full bg-diamant" /></span>
-      </div>
-      <div className="space-y-3.5">
-        {rows.map(([label, a, b, unit = ""]) => {
-          const tot = (a ?? 0) + (b ?? 0);
-          const pa = tot ? ((a ?? 0) / tot) * 100 : 50;
-          return (
-            <div key={label}>
-              <div className="mb-1 flex items-baseline justify-between text-sm">
-                <span className={`font-extrabold tabular ${(a ?? 0) > (b ?? 0) ? "text-gold-100" : "text-ink-dim"}`}>{a ?? "—"}{a != null && unit}</span>
-                <span className="label">{label}</span>
-                <span className={`font-extrabold tabular ${(b ?? 0) > (a ?? 0) ? "text-[#cfe0ff]" : "text-ink-dim"}`}>{b ?? "—"}{b != null && unit}</span>
-              </div>
-              <div className="flex h-2 gap-0.5 overflow-hidden rounded-full bg-black/30" title={`${label} : ${a ?? 0} contre ${b ?? 0}`}>
-                <span className="rounded-full bg-gradient-to-r from-gold-700 to-gold-300" style={{ width: `${pa}%` }} />
-                <span className="flex-1 rounded-full bg-gradient-to-r from-diamant to-[#3b6fd8]" />
-              </div>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

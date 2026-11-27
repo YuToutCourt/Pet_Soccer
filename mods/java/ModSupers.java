@@ -43,6 +43,15 @@ class ModSupers {
    static final int _ACT_SAVE = 2;
    static final String[] _ACT_NAMES = new String[]{"tir cadre", "recuperation", "arret"};
    static int[] m_nPerLetter = new int[]{8, 15, 8};
+   // [mod] rattrapage (méta du 2026-11-27) : l'équipe menée remplit sa jauge plus vite, x (1 + m_fCatchUpPerGoal par
+   // but de retard), au plus x m_fCatchUpMax ; 0 = désactivé
+   static float m_fCatchUpPerGoal = 0.0F;
+   static float m_fCatchUpMax = 1.0F;
+   // lettre d'un but : 0 = personne, 1 = l'équipe qui marque (jeu d'origine), 2 = l'équipe qui encaisse
+   static final int _GOAL_LETTER_NONE = 0;
+   static final int _GOAL_LETTER_SCORER = 1;
+   static final int _GOAL_LETTER_CONCEDER = 2;
+   static int m_nGoalLetter = _GOAL_LETTER_SCORER;
    // effets à durée, par côté (Team.m_nSide) : fin en temps de match, -1 = inactif
    static float[] m_fFreezeEnd = new float[]{-1.0F, -1.0F};
    static float[] m_fMagnetEnd = new float[]{-1.0F, -1.0F};
@@ -126,10 +135,17 @@ class ModSupers {
             m_nPerLetter[_ACT_RECOVERY] = Math.max(0, key.GetIParam(0));
          } else if (key.Equals("SavesPerLetter")) {
             m_nPerLetter[_ACT_SAVE] = Math.max(0, key.GetIParam(0));
+         } else if (key.Equals("CatchUpPerGoal")) {
+            m_fCatchUpPerGoal = Math.max(0.0F, key.GetFParam(0));
+         } else if (key.Equals("CatchUpMax")) {
+            m_fCatchUpMax = Math.max(1.0F, key.GetFParam(0));
+         } else if (key.Equals("GoalLetter")) {
+            m_nGoalLetter = Math.max(0, Math.min(2, key.GetIParam(0)));
          }
       }
 
-      GameObject.CrashLog("[mod] supers charges depuis " + _FILE + " (FillTime " + m_fFillTime + ", lettre tous les " + m_nPerLetter[_ACT_SHOT] + " tirs / " + m_nPerLetter[_ACT_RECOVERY] + " recuperations / " + m_nPerLetter[_ACT_SAVE] + " arrets)\n");
+      GameObject.CrashLog("[mod] supers charges depuis " + _FILE + " (FillTime " + m_fFillTime + ", lettre tous les " + m_nPerLetter[_ACT_SHOT] + " tirs / " + m_nPerLetter[_ACT_RECOVERY] + " recuperations / " + m_nPerLetter[_ACT_SAVE] + " arrets, rattrapage " + m_fCatchUpPerGoal + " par but max " + m_fCatchUpMax
+         + ", lettre du but " + m_nGoalLetter + ")\n");
    }
 
    // ---------------------------------------------------------------- jauge
@@ -156,11 +172,13 @@ class ModSupers {
 
       int[] n = ((AITeam)t).m_nModSuperActions;
       n[nAct]++;
+      // [mod] rattrapage : l'équipe menée a besoin de moins d'actions par lettre
+      int nNeed = Math.max(1, (int)Math.ceil(m_nPerLetter[nAct] / CatchUpMul(t)));
       if (SoccerGame.m_bDebug) {
-         GameObject.CrashLog("[mod] lettre super : " + t.m_sName + " " + _ACT_NAMES[nAct] + " " + n[nAct] + "/" + m_nPerLetter[nAct] + "\n");
+         GameObject.CrashLog("[mod] lettre super : " + t.m_sName + " " + _ACT_NAMES[nAct] + " " + n[nAct] + "/" + nNeed + "\n");
       }
 
-      if (n[nAct] >= m_nPerLetter[nAct]) {
+      if (n[nAct] >= nNeed) {
          n[nAct] = 0;
          t.IncreaseSuperFillCount();
       }
@@ -175,7 +193,83 @@ class ModSupers {
             for (int i = 0; i < n.length; i++) {
                n[i] = 0;
             }
+
+            ((AITeam)t).m_fModCatchUpTime = 0.0F;
          }
+      }
+   }
+
+   // [mod] buts de retard de l'équipe t (0 si elle mène ou s'il y a égalité). Le score reste celui des côtés du coup
+   // d'envoi (m_nScoreLeft = équipe de gauche au coup d'envoi, même après l'échange de la mi-temps) : même règle
+   // d'index que ModStats.AddRecord
+   static int Deficit(Team t) {
+      AIMatch cMatch = SoccerModule.m_cMatch;
+      if (cMatch == null) {
+         return 0;
+      }
+
+      int nHost = cMatch.m_nHalfNo != 0 && !cMatch.m_bGoldGoal ? 1 : 0;
+      boolean bHost = t.m_nSide == nHost;
+      int nFor = bHost ? cMatch.m_nScoreLeft : cMatch.m_nScoreRight;
+      int nAgainst = bHost ? cMatch.m_nScoreRight : cMatch.m_nScoreLeft;
+      return Math.max(0, nAgainst - nFor);
+   }
+
+   // [mod] vitesse de remplissage de la jauge de l'équipe t (1 = normale)
+   static float CatchUpMul(Team t) {
+      Load();
+      if (m_fCatchUpPerGoal <= 0.0F) {
+         return 1.0F;
+      }
+
+      return Math.min(m_fCatchUpMax, 1.0F + m_fCatchUpPerGoal * Deficit(t));
+   }
+
+   // [mod] rattrapage sur la possession : Team.Update donne une lettre toutes les m_fSuperUpgradeTime secondes de
+   // possession ; l'équipe menée qui a le ballon cumule en plus fDelta x (mul - 1) et gagne une lettre de plus à
+   // chaque m_fSuperUpgradeTime. Mêmes exclusions qu'AddAction.
+   static void UpdateCatchUp(float fDelta) {
+      AIMatch cMatch = SoccerModule.m_cMatch;
+      if (m_fCatchUpPerGoal <= 0.0F || ModNet.IsClient() || cMatch == null || !AIMatch.IsMatchState(0) || cMatch.m_bGoldGoal) {
+         return;
+      }
+
+      for (int s = 0; s < 2; s++) {
+         Team t = cMatch.GetTeam(s);
+         if (!(t instanceof AITeam)) {
+            continue;
+         }
+
+         AITeam at = (AITeam)t;
+         float fMul = CatchUpMul(t);
+         if (fMul <= 1.0F || t.m_cPrevBallPossesor != t || t.m_bSuperDoing || t.m_nSuperFillCount >= 5 || t.m_cStrategy == null) {
+            continue;
+         }
+
+         float fFill = t.m_cStrategy.m_fSuperUpgradeTime;
+         if (fFill <= 0.0F) {
+            continue;
+         }
+
+         at.m_fModCatchUpTime += fDelta * (fMul - 1.0F);
+         if (at.m_fModCatchUpTime >= fFill) {
+            at.m_fModCatchUpTime -= fFill;
+            Log("lettre super de rattrapage : " + t.m_sName + " (x" + fMul + ", " + Deficit(t) + " but(s) de retard)");
+            t.IncreaseSuperFillCount();
+         }
+      }
+   }
+
+   // [mod] AIMatch.OnGoal : l'équipe qui reçoit la lettre d'un but (GoalLetter), null = personne
+   static Team GoalLetterTeam(Match cMatch, int nScorer) {
+      Load();
+      switch (m_nGoalLetter) {
+         case _GOAL_LETTER_SCORER:
+            return cMatch.GetTeam(nScorer);
+         case _GOAL_LETTER_CONCEDER:
+            return cMatch.GetTeam(1 - nScorer);
+         default:
+            return null;
       }
    }
 
@@ -357,6 +451,7 @@ class ModSupers {
          return;
       }
 
+      UpdateCatchUp(fDelta);
       UpdateCrazy(b, fDelta);
       UpdateMagnet(b, fDelta);
       UpdateDecoy(b, fDelta);

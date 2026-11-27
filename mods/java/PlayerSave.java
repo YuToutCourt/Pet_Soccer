@@ -8,7 +8,7 @@ public class PlayerSave {
    KbSettings m_Kb0 = new KbSettings(0);
    KbSettings m_Kb1 = new KbSettings(1);
    int m_nDiffLevel = 1;
-   int m_nDiffSetting = 1;
+   int m_nDiffSetting = 6; // [mod] Classé par défaut (CoreLogic.GetDiffLevel)
    static final int _MAX_DIFF_LEVEL = 7;
    boolean[] m_tExtrasAvailable = new boolean[CoreLogic.GetExtraLevelsCount()];
    boolean[] m_tTeamsAvailable = new boolean[12];
@@ -205,7 +205,7 @@ public class PlayerSave {
       this.m_Kb0 = new KbSettings(0);
       this.m_Kb1 = new KbSettings(1);
       this.m_nDiffLevel = 1;
-      this.m_nDiffSetting = 1;
+      this.m_nDiffSetting = 6; // [mod] Classé par défaut
 
       for (int i = 0; i < this.m_tExtrasAvailable.length; i++) {
          this.m_tExtrasAvailable[i] = false;

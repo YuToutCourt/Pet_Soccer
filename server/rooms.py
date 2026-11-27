@@ -37,6 +37,9 @@ def scope(ip):
     return SCOPE_PRIVATE if addr.is_private or addr.is_link_local else SCOPE_PUBLIC
 
 
+ENDED_KEEP = 300.0  # secondes pendant lesquelles le direct d'un match fini reste sur le site
+
+
 class Session:
     """Un jeu connecté au serveur."""
 
@@ -84,6 +87,7 @@ class Room:
         self.started_at = None  # heure réelle du début du match en cours (enregistrée avec le match)
         self.spectators = []  # jeux qui regardent ce salon (partie classée ou ligue seulement)
         self.spectator_joins = 0  # arrivées de spectateurs : l'hôte voit ce compteur changer et les remet à niveau
+        self.live_stats = None  # dernier PKT_MATCH_LIVE de l'hôte pour le match en cours (page « En direct » du site)
 
     def watchable(self):
         """On ne regarde que les parties classées et les matchs de ligue, pas les salons privés entre amis."""
@@ -126,6 +130,7 @@ class Lobby:
         self.clock = time.time  # heure réelle, pour la base
         self.pending_stats = {}  # (identifiant du jeu de l'hôte, n° du match) -> statistiques arrivées avant la fin
         self.recorded = {}  # (identifiant du jeu de l'hôte, n° du match) -> n° du match dans la base, sans statistiques
+        self.ended_live = {}  # clé du direct -> sa dernière ligne (live_row), gardée ENDED_KEEP s après la fin du match
         self.now = 0.0
         self.log = lambda text: None
 
@@ -545,6 +550,7 @@ class Lobby:
             room.engaged = set()
             room.claim_at = None
             room.started_at = self.clock()
+            room.live_stats = None
             self.log("%s %s : match %d en cours" % (self.room_kind(room), room.code, match_id))
         if flags & P.MATCH_LINKED:
             self.match_packet(session, now)
@@ -612,7 +618,7 @@ class Lobby:
         """Compte le match en cours du salon. loser : le joueur forfait. Un salon privé est enregistré sans Elo."""
         match_id = room.live
         started = room.started_at
-        self.close_match(room)
+        live_key = self.close_match(room, "forfeit" if loser is not None else "played", (score_host, score_guest))
         host, guest = room.host, room.guest
         if self.store is None or host is None or guest is None:
             return
@@ -641,6 +647,8 @@ class Lobby:
         except Exception as e:  # base injoignable : le match est perdu pour la base, pas pour la ligue
             self.log("ERREUR enregistrement du match %d (%s) : %s" % (match_id, room.code, e))
             db_id, delta_host, delta_guest, rated = None, 0, 0, False
+        if live_key in self.ended_live:
+            self.ended_live[live_key]["match_db"] = db_id
         if db_id is not None and stats is None:
             self.recorded[key] = db_id  # les statistiques de l'hôte arriveront peut-être juste après
             while len(self.recorded) > 1000:
@@ -685,14 +693,76 @@ class Lobby:
 
     def void(self, room, why):
         match_id = room.live
-        self.close_match(room)
+        self.close_match(room, "void")
         for session in (room.host, room.guest):
             if session is not None:
                 session.result = (match_id, P.RESULT_VOID, 0, 0)
         self.log("%s %s : match %d pas compté (%s)" % (self.room_kind(room), room.code, match_id, why))
 
-    def close_match(self, room):
+    def close_match(self, room, outcome="void", score=None):
+        """Le match en cours du salon est tranché. Renvoie la clé de son direct (gardé ENDED_KEEP s, avec son issue)."""
+        key = None
+        if room.live and room.guest is not None:
+            row = self.live_row(room)
+            key = row["key"]
+            row.update(ended=True, outcome=outcome, ended_at=self.clock())
+            if score is not None:
+                row["score_host"], row["score_guest"] = score
+            self.ended_live[key] = row
         room.decided.add(room.live)
         room.live = 0
+        room.live_stats = None
         room.engaged = set()
         room.claim_at = None
+        return key
+
+    # --- direct du site (table live_matches) ---
+
+    def match_live(self, session, stats):
+        """PKT_MATCH_LIVE : les statistiques du match en cours, envoyées par le jeu de l'hôte toutes les 10 s."""
+        room = session.room
+        if room is None or room.host is not session or not room.live or stats["match_id"] != room.live:
+            return
+        room.live_stats = stats
+
+    def live_row(self, room):
+        """Ce que la page « En direct » du site montre d'un match en cours (une ligne de live_matches)."""
+        host, guest = room.host, room.guest
+        hs = host.match_state if host.match_state and host.match_state["match_id"] == room.live else None
+        teams = hs["teams"] if hs else None
+        sides = [self.side_info(host, room.live, teams, 0), self.side_info(guest, room.live, teams, 1)]
+        report = host.report if host.report is not None and host.report[0] == room.live else None
+        stats = room.live_stats
+        live = None
+        if stats is not None:
+            # sans les heatmaps : le direct montre le score, le fil du match et les statistiques d'équipe
+            live = dict(golden_goal=stats["golden_goal"], teams=[
+                {k: v for k, v in t.items() if k not in ("heatmap", "ball_heatmap")} for t in stats["teams"]])
+        row = dict(key="%s-%d" % (room.code, room.live),
+                   kind="league" if room.league is not None else ("ranked" if room.ranked else "private"),
+                   started=room.started_at,
+                   score_host=report[2] if report else 0, score_guest=report[3] if report else 0,
+                   minute=stats["minute"] if stats else None, half=stats["half"] if stats else None,
+                   half_seconds=hs["half"] if hs else None, stadium=hs["level"] if hs else None,
+                   stats=live, spectators=len(room.spectators), ended=False, outcome=None, match_db=None, ended_at=None)
+        for prefix, side in (("host", sides[0]), ("guest", sides[1])):
+            player = side["player"]
+            row[prefix + "_id"] = player.id if player else None
+            row[prefix + "_name"] = side["name"]
+            row[prefix + "_animal"] = side["animal"]
+            row[prefix + "_elo"] = player.elo if player else None
+        return row
+
+    def live_rows(self):
+        """Les matchs en cours, puis ceux finis depuis moins de ENDED_KEEP s (le site renvoie vers leur fiche)."""
+        now = self.clock()
+        for key in [k for k, r in self.ended_live.items() if now - r["ended_at"] > ENDED_KEEP]:
+            del self.ended_live[key]
+        rows = {}
+        for room in self.rooms.values():
+            if room.live and room.guest is not None:
+                row = self.live_row(room)
+                rows[row["key"]] = row
+        for key, row in self.ended_live.items():
+            rows.setdefault(key, row)
+        return list(rows.values())

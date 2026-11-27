@@ -494,11 +494,14 @@ def test_persist(port):
 TACTIC_A = "BETON;LIBERO,STOPPEUR,DEFENSEUR,DEFENSEUR,MILIEU,PIVOT;200/230,180/500,200/780,440/390,410/500,440/610;-;-;-"
 
 
-def team_stats(shots, goals, slot_roles=True):
-    """Statistiques d'une équipe, comme les enverrait le jeu de l'hôte (protocol.read_match_stats)."""
-    players = [dict(number=n, slot=(n - 1 if slot_roles else -1) if n else -1, goals=1 if n == 5 and goals else 0,
+def team_stats(shots, goals, slot_roles=True, origin=False):
+    """Statistiques d'une équipe, comme les enverrait le jeu de l'hôte (protocol.read_match_stats). origin : jeu
+    d'origine (mod v13), les joueurs 4 à 6 attaquants pour le moteur, les autres défenseurs."""
+    players = [dict(number=n, slot=(n - 1 if slot_roles or origin else -1) if n else -1, goals=1 if n == 5 and goals else 0,
                     shots=2 if n == 5 else 0, passes=4, passes_ok=3, recoveries=1, distance=900 + n,
-                    depth=0.1 if n == 0 else 0.5, lateral=0.5) for n in range(7)]
+                    depth=0.1 if n == 0 else 0.5, lateral=0.5,
+                    origin_role=(P.ORIGIN_ROLES[1] if n >= 4 else P.ORIGIN_ROLES[0]) if origin and n else None)
+               for n in range(7)]
     return dict(shots=shots, possession=55, passes_ok=21, passes=28, recoveries=9, saves=2, supers=1, super_types=4,
                 max_deficit=0, goals=[dict(minute=10 + 20 * i, number=5, own_goal=False) for i in range(goals)],
                 super_events=[dict(minute=33, type=2)],
@@ -511,6 +514,12 @@ def send_stats(game, match_id, teams, golden=False):
     t = teams
     game.seq += 1
     game.sock.sendto(P.make_lobby(P.PKT_MATCH_STATS, game.client_id, game.seq, P.make_match_stats(match_id, t, golden),
+                                  game.secret), game.server)
+
+
+def send_live(game, match_id, teams, minute, half=0):
+    game.seq += 1
+    game.sock.sendto(P.make_lobby(P.PKT_MATCH_LIVE, game.client_id, game.seq, P.make_match_live(match_id, teams, minute, half),
                                   game.secret), game.server)
 
 
@@ -537,8 +546,18 @@ def test_private(port):
     a.ask(P.PKT_STATE, P.make_state(True, True, 7, 0, TACTIC_A, level=3, half=120, match_id=601, teams=teams))
     b.ask(P.PKT_STATE, P.make_state(True, False, 12, 1, "ORIGINE", level=3, half=120, match_id=601, teams=teams))
     play(a, b, 601)
+    a.report(601, P.MATCH_PLAYING, 2, 1)
+    send_live(b, 601, [team_stats(99, 9), team_stats(99, 9)], 80)  # l'invité ne simule pas : ignoré
+    send_live(a, 601, [team_stats(5, 2), team_stats(3, 1, origin=True)], 61, 1)
+    time.sleep(3.5)  # le serveur écrit le direct toutes les 3 s
+    live = db_one("SELECT key, kind, host_name, guest_name, host_animal, guest_animal, score_host, score_guest, minute,"
+                  " half, ended, stats FROM live_matches WHERE key = %s", ("%s-601" % code,))
+    check("direct : match en cours dans live_matches, 2-1 à la 61e, statistiques de l'hôte sans heatmaps",
+          live is not None and live[1:11] == ("private", "Alice", "Bob", 7, 12, 2, 1, 61, 1, False)
+          and live[11]["teams"][0]["shots"] == 5 and "heatmap" not in live[11]["teams"][0]
+          and len(live[11]["teams"][0]["goals"]) == 2)
     send_stats(b, 601, [team_stats(99, 9), team_stats(99, 9)])  # l'invité ne simule pas : ignoré
-    send_stats(a, 601, [team_stats(7, 3), team_stats(4, 1, slot_roles=False)], golden=True)
+    send_stats(a, 601, [team_stats(7, 3), team_stats(4, 1, origin=True)], golden=True)
     a.report(601, P.MATCH_FINISHED, 3, 1)
     info = b.report(601, P.MATCH_FINISHED, 3, 1)
     check("salon privé : les deux jeux annoncent 3-1, le match est tranché sans Elo",
@@ -562,6 +581,12 @@ def test_private(port):
     check("7 joueurs par équipe, avec le rôle de leur place (gardien sans rôle)",
           len(fb) == 14 and fb[0][2:4] == (-1, None) and fb[1][2:4] == (0, "LIBERO") and fb[6][2:4] == (5, "PIVOT")
           and fb[5][4] == 1 and fb[7][3] is None)
+    check("jeu d'origine : place par points d'apparition, défenseur ou attaquant du moteur",
+          fb[8][2:4] == (0, "ORIGINE_DEF") and fb[11][2:4] == (3, "ORIGINE_ATT") and fb[13][2:4] == (5, "ORIGINE_ATT"))
+    time.sleep(3.5)
+    live = db_one("SELECT ended, outcome, match_id, score_host, score_guest FROM live_matches WHERE key = %s",
+                  ("%s-601" % code,))
+    check("direct : le match fini y reste, avec son issue et son numéro dans matches", live == (True, "played", m[0], 3, 1))
     ev = db_all("SELECT kind, side, minute, result FROM match_events WHERE match_id = %s ORDER BY seq", (m[0],))
     kinds = [e[0] for e in ev]
     check("fil du match : 4 buts, 2 supers, 4 tirs (%d événements)" % len(ev),
@@ -637,6 +662,12 @@ def test_parse():
         check("PKT_MATCH_STATS tronqué refusé", False)
     except (ValueError, struct.error):
         check("PKT_MATCH_STATS tronqué refusé", True)
+    teams = [team_stats(5, 2, origin=True), team_stats(1, 0)]
+    live = P.read_match_live(P.make_lobby(P.PKT_MATCH_LIVE, 1, 1, P.make_match_live(78, teams, 47, 1)))
+    check("PKT_MATCH_LIVE relu : statistiques, minute, mi-temps, rôles du jeu d'origine",
+          live["match_id"] == 78 and live["minute"] == 47 and live["half"] == 1
+          and [p["slot"] for p in live["teams"][0]["players"]] == [-1, 0, 1, 2, 3, 4, 5]
+          and [p["origin_role"] for p in live["teams"][0]["players"]][1:] == ["ORIGINE_DEF"] * 3 + ["ORIGINE_ATT"] * 3)
 
 
 # ------------------------------------------------------------------ ligue en ligne

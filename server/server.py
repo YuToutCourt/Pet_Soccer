@@ -225,7 +225,7 @@ class Server:
             return
 
         if ptype not in (P.PKT_HELLO, P.PKT_CREATE, P.PKT_JOIN, P.PKT_LEAVE, P.PKT_STATE, P.PKT_QUEUE, P.PKT_MATCH,
-                         P.PKT_TOP, P.PKT_LEAGUE, P.PKT_MATCH_STATS, P.PKT_LIVE, P.PKT_SPECTATE):
+                         P.PKT_TOP, P.PKT_LEAGUE, P.PKT_MATCH_STATS, P.PKT_LIVE, P.PKT_SPECTATE, P.PKT_MATCH_LIVE):
             return
         if not self.packets.allow(addr[0], now):
             self.refused += 1
@@ -252,6 +252,9 @@ class Server:
         if ptype == P.PKT_MATCH_STATS:
             # pas de réponse : le jeu redit ses statistiques avec PKT_MATCH, qui a la sienne
             lobby.match_stats(session, P.read_match_stats(data))
+            return
+        if ptype == P.PKT_MATCH_LIVE:
+            lobby.match_live(session, P.read_match_live(data))  # pas de réponse non plus
             return
 
         join_error = P.JOIN_OK
@@ -310,8 +313,18 @@ class Server:
         if self.lobby.store is not None:
             self.lobby.store.write_status(*self.lobby.status())
 
+    def write_live(self):
+        """Matchs en cours pour la page « En direct » du site ; rien à écrire si la table est déjà vide."""
+        if self.lobby.store is None:
+            return
+        rows = self.lobby.live_rows()
+        if rows or self.live_written:
+            self.lobby.store.write_live(rows)
+        self.live_written = bool(rows)
+
     def run(self):
-        next_expire = next_stats = next_status = time.monotonic()
+        next_expire = next_stats = next_status = next_live = time.monotonic()
+        self.live_written = True  # vide au démarrage les matchs d'un serveur précédent
         while True:
             now = time.monotonic()
             wait = 0.5
@@ -351,6 +364,9 @@ class Server:
                 if now >= next_status:
                     next_status = now + 10.0
                     self.write_status()
+                if now >= next_live:
+                    next_live = now + 3.0
+                    self.write_live()
             except DatabaseError as e:
                 self.log("ERREUR base : %s" % e)
             except Exception as e:

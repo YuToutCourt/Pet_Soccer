@@ -23,6 +23,10 @@
 !Scheme(s,s,s,s,s,s,s,s) // id, cle du nom, 6 roles (ORIGINE = placement du jeu d'origine)
 !TeamScheme(i,s)         // schema d'une equipe IA (numero d'animal, voir EAnimals)
 !AIScheme(s)             // schema des equipes IA sans TeamScheme
+!AIVary(i)               // 1 = l'IA tire son schema a chaque match (AISchemeWeight, AIFavorite) et peut en changer a la mi-temps
+!AISchemeWeight(s,f)     // schema et poids dans le tirage de l'IA
+!AIFavorite(f)           // chance de jouer le schema prefere de l'equipe (TeamScheme) au lieu du tirage
+!AIAdapt(f,i,i,s,s)      // mi-temps : chance, retard et avance (buts), schema si menee, schema si elle mene
 !HumanScheme(s)          // schema par defaut de l'equipe du joueur (avant tout choix dans le menu Tactique)
 !HumanMarking(f)         // force du marquage des coequipiers du joueur (multiplie Marking du role)
 !HumanMarkDistance(f)    // distance de marquage des coequipiers du joueur
@@ -234,7 +238,33 @@ Scheme("CONTRE", "SchemeCounter", "LIBERO", "DEFENSEUR", "DEFENSEUR", "MILIEU", 
 Scheme("INDIVIDUEL", "SchemeManMark", "STOPPEUR", "STOPPEUR", "STOPPEUR", "MILIEU", "ATTAQUANT", "ATTAQUANT")
 Scheme("ATTAQUE", "SchemeAllOut", "DEFENSEUR", "MILIEU", "MILIEU", "AILIER", "AILIER", "PIVOT")
 
-AIScheme("ORIGINE")
+AIScheme("ORIGINE")      // meta (MetaSchemes vide) et AIVary(0)
+
+// Tactiques variees de l'IA (hors meta, hors en ligne)
+AIVary(1)
+AISchemeWeight("ORIGINE", 3)
+AISchemeWeight("EQUILIBRE", 1)
+AISchemeWeight("BETON", 1)
+AISchemeWeight("CONTRE", 1)
+AISchemeWeight("INDIVIDUEL", 1)
+AISchemeWeight("ATTAQUE", 1)
+AIFavorite(0.4)
+AIAdapt(0.7, 1, 2, "ATTAQUE", "BETON")
+// schema prefere de chaque equipe (numero d'animal, voir EAnimals)
+TeamScheme(0, "INDIVIDUEL")
+TeamScheme(1, "ATTAQUE")
+TeamScheme(2, "CONTRE")
+TeamScheme(3, "EQUILIBRE")
+TeamScheme(4, "CONTRE")
+TeamScheme(5, "EQUILIBRE")
+TeamScheme(6, "INDIVIDUEL")
+TeamScheme(7, "ATTAQUE")
+TeamScheme(8, "CONTRE")
+TeamScheme(9, "ATTAQUE")
+TeamScheme(10, "BETON")
+TeamScheme(11, "EQUILIBRE")
+TeamScheme(12, "BETON")
+TeamScheme(13, "ATTAQUE")
 HumanScheme("ORIGINE")
 HumanMarking(1.0)
 HumanMarkDistance(150)

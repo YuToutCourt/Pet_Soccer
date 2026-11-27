@@ -57,10 +57,16 @@ export function footballerName(animal: number | null | undefined, num: number | 
 export const ROLES: Record<string, string> = {
   LIBERO: "Libéro", STOPPEUR: "Stoppeur", DEFENSEUR: "Défenseur", LATERAL: "Latéral",
   MILIEU: "Milieu", AILIER: "Ailier", ATTAQUANT: "Attaquant", PIVOT: "Pivot",
+  // jeu d'origine (mod v13) : le moteur ne connaît que défenseurs et attaquants
+  ORIGINE_DEF: "Défenseur (origine)", ORIGINE_ATT: "Attaquant (origine)",
 };
 export const SCHEMES: Record<string, string> = {
   ORIGINE: "Jeu d'origine", EQUILIBRE: "Équilibre", BETON: "Béton", CONTRE: "Contre",
   INDIVIDUEL: "Individuel", ATTAQUE: "Attaque",
+};
+/** Types de super (Team.m_nSuperType, notes/supers.md). */
+export const SUPERS: Record<number, string> = {
+  0: "Tir", 1: "Feinte", 2: "Vitesse", 3: "Mur", 4: "Gel", 5: "Ballon fou", 6: "Aimant", 7: "Tir double",
 };
 export const KINDS: Record<string, string> = { ranked: "Classé", private: "Salon privé", league: "Ligue" };
 export type Kind = keyof typeof KINDS;
@@ -100,6 +106,11 @@ export function rankOf(elo: number): Rank {
 
 export function pct(a: number | null | undefined, b: number | null | undefined): number {
   return b ? Math.round((100 * (a ?? 0)) / b) : 0;
+}
+
+/** Score en % : une victoire vaut 1, un nul ½. 50 % = équilibré. */
+export function score(w: number, d: number, n: number): number {
+  return pct(w + d / 2, n);
 }
 
 export function fmtDate(ts: number | null | undefined): string {

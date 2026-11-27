@@ -141,7 +141,10 @@ public class AIFootBaller extends FootBaller {
             this.m_cKick.m_vDestPos = cShot.m_vDest;
             this.m_cKick.m_bShoot = true;
             this.m_cKick.m_bDefence = false;
-            if (!(cShot.m_vDest.fY - this.TerrainHeight(cShot.m_vDest.fX, cShot.m_vDest.fZ) > 70.0F) && !this.m_bHeadShot) {
+            // [mod] au-dessus de 70 de haut, le tir part en lob ; un gros frappeur (Force > 90, ForceEffects) frappe
+            // encore droit un peu plus haut
+            float fLobHeight = 70.0F * ETeams.GetLobThresholdMul(super.m_nAnimalType);
+            if (!(cShot.m_vDest.fY - this.TerrainHeight(cShot.m_vDest.fX, cShot.m_vDest.fZ) > fLobHeight) && !this.m_bHeadShot) {
                this.m_cKick.m_bLob = false;
                SoccerModule.m_cMatch.UnblockControlForFocus(cShot.m_vDest);
             } else {
@@ -1847,10 +1850,12 @@ public class AIFootBaller extends FootBaller {
          if (!AIMatch.IsMatchState(1) && !SoccerModule.m_cMatch.m_bMatchEnding) {
             float fScopeUp = 20.0F;
             if (this.IsGoalKeeper()
-               && super.fFlatBallDistance <= super.fCanAttachBallDistance
+               // [mod] largeur du gardien au moins KeeperMinWidth (team_stats.scr) : aide les gardiens étroits
+               && super.fFlatBallDistance <= ETeams.GetKeeperCatchDistance(this)
                && !ball.HasOwner()
                && vBallPos.fY > vPos.fY - ball.fBallRadius * 2.0F
-               && vBallPos.fY <= vPos.fY + super.fHeight + ball.fBallRadius * 2.0F + fScopeUp
+               // [mod] hauteur du gardien au moins KeeperMinReach (team_stats.scr) : aide les petits gardiens
+               && vBallPos.fY <= vPos.fY + ETeams.GetKeeperReach(this) + ball.fBallRadius * 2.0F + fScopeUp
                && this.IsDefence()
                && !this.m_bBumped) {
                this.BumpDefenceBall();

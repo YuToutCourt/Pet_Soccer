@@ -409,7 +409,7 @@ class Recorder {
 
    void TimerSetSpeedUp(float fSpeedUp) {
       ModNet.OnSpeedUp(fSpeedUp); // [mod] en ligne : le ralenti est diffusé au client
-      this.m_cRecordedObject.GetModule().TimerSetSpeedUp(fSpeedUp);
+      this.m_cRecordedObject.GetModule().TimerSetSpeedUp(ModMeta.Speed(fSpeedUp)); // [mod] méta : temps accéléré
       m_cClock.SetSpeedUp(fSpeedUp);
    }
 

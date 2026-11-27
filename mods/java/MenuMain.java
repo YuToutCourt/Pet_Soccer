@@ -35,6 +35,12 @@ public class MenuMain extends SoccerUserInterface {
       ((SoccerMainMenuModule)this.GetModule()).ShowUI(SoccerMainMenuModule._UI_ONLINE);
    }
 
+   // [mod] match de méta (ModMeta)
+   void MetaStart() {
+      this.DisableCallMethod("StartDemo");
+      ModMeta.Start();
+   }
+
    // [mod] test du salon sans souris : NetAuto dans debugconf.scr (voir notes/online.md)
    void OnlineTest() {
       this.DisableCallMethod("StartDemo");
@@ -380,6 +386,12 @@ public class MenuMain extends SoccerUserInterface {
       // [mod] test de l'écran Contrôles sans souris : ControlsTest(1) dans debugconf.scr (voir notes/tactics.md)
       if (ModSwitch.GetDebugTest()) {
          this.CallMethodIn("ControlsTest", 1.0F);
+      }
+
+      // [mod] match de méta IA contre IA (ModMeta)
+      if (ModMeta.ShouldStart()) {
+         this.DisableCallMethod("StartDemo");
+         this.CallMethodIn("MetaStart", 1.0F);
       }
 
       // [mod] test du salon sans souris : NetAuto dans debugconf.scr (une fois)

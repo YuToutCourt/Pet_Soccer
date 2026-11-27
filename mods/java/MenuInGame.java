@@ -297,6 +297,11 @@ public class MenuInGame extends SoccerUserInterface {
             this.m_cGameModule.HandleUIClick(1);
          }
 
+         if (this.m_bMatchEnd && ModMeta.IsActive()) {
+            ModMeta.OnMatchEnd(); // [mod] méta : résultat écrit, le jeu se ferme
+            return;
+         }
+
          if (this.m_bMatchEnd) {
             this.Quit();
             ((MenuMain)SoccerGame.firstMenuModule.GetUI(0)).CallMethodIn("StartDemo", 20.0F);

@@ -70,6 +70,10 @@ def build(res):
         for l in label:
             if l.strip().startswith("Text("):
                 l = l.replace(re.search(r'Text\("[^"]*"\)', l).group(0), 'Text("&&MenuControlsKeySelect&&")')
+            elif l.strip() == "Mouse(0)":
+                # avec Mouse(0), ses enfants (les 6 cases) ne recevaient ni le survol ni le clic (vu le 2026-11-25) ;
+                # « Haut », seule case qui marchait, a un libellé parent en Mouse(1)
+                l = l.replace("Mouse(0)", "Mouse(1)")
             out.append(pad + l)
         out.append("")
 

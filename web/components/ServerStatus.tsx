@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { connection } from "next/server";
 import { getServerStatus } from "@/lib/queries";
 
@@ -13,9 +14,9 @@ export default async function ServerStatus({ big = false }: { big?: boolean }) {
     );
   }
   return (
-    <span className={`inline-flex items-center gap-2 whitespace-nowrap ${big ? "text-sm" : "text-xs"} font-bold text-win`} title={`${s.queued} en file d'attente`}>
+    <Link href="/direct" className={`inline-flex items-center gap-2 whitespace-nowrap ${big ? "text-sm" : "text-xs"} font-bold text-win hover:underline`} title={`${s.queued} en file d'attente · matchs en direct`}>
       <span className="anim-pulse size-2 rounded-full bg-win shadow-[0_0_8px_var(--win)]" />
       {s.online} en ligne · {s.live_matches} en match
-    </span>
+    </Link>
   );
 }

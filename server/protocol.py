@@ -49,6 +49,9 @@ PKT_SPECTATE = 27  # + code du salon (chaîne), numéro du match dont le stade e
 #                    aucun). Redit tant qu'on regarde ; PKT_LEAVE arrête. Refus dans PKT_INFO (JOIN_UNKNOWN, JOIN_FULL,
 #                    JOIN_VERSION). Un spectateur qui arrive, ou dont le stade vient d'être chargé, fait tourner le
 #                    compteur d'arrivées que l'hôte lit dans PKT_INFO : il lui envoie alors l'état durable du match.
+PKT_MATCH_LIVE = 28  # mod v13, le jeu de l'hôte pendant un match en ligne, toutes les 10 s : ses statistiques (format de
+#                      PKT_MATCH_STATS) + minute (octet) + mi-temps (octet : 0, 1, 2 = but en or). Pour la page
+#                      « En direct » du site ; jamais enregistrées avec le match. Pas de réponse.
 
 # Serveur -> jeu
 PKT_INFO = 32  # réponse à chaque paquet ci-dessus
@@ -283,7 +286,8 @@ def make_state(ready=False, host=False, animal=0, clothes=0, tactic="", level=0,
 #     est de l'autre équipe ;
 #   supers : n, puis n x (minute, type) ;
 #   tirs : n, puis n x (minute, joueur (signé), profondeur, latéral (0..255), issue SHOT_*) ;
-#   joueurs : n, puis n x (place dans la liste Team<Animal>Players (0 = gardien), place de la tactique (signé, -1),
+#   joueurs : n, puis n x (place dans la liste Team<Animal>Players (0 = gardien), place de la tactique (signé, -1 ;
+#     mod v13, jeu d'origine : SLOT_ORIGIN + place par points d'apparition, + SLOT_ORIGIN_ATT pour un attaquant),
 #     buts, tirs, passes, passes réussies, récupérations (octets), distance en m (short non signé),
 #     profondeur et latéral moyens (0..255)) ;
 #   heatmap de l'équipe, puis du ballon quand elle l'a : profondeur x latéral octets (0..255, ligne par profondeur).
@@ -294,10 +298,31 @@ SHOT_RESULTS = ("missed", "goal", "saved", "blocked")
 _MS_HEAD = struct.Struct(">iBBB")
 _MS_TEAM = struct.Struct(">hBhhhhhiB")
 _MS_PLAYER = struct.Struct(">BbBBBBBHBB")
+SLOT_ORIGIN = 0x10  # ModTactics._STATS_ORIGIN
+SLOT_ORIGIN_ATT = 0x08
+ORIGIN_ROLES = ("ORIGINE_DEF", "ORIGINE_ATT")  # rôle enregistré d'un joueur du jeu d'origine (défenseur, attaquant moteur)
 
 
 def read_match_stats(data):
     """PKT_MATCH_STATS complet (en-tête compris). Renvoie un dict ; ValueError s'il est tronqué ou mal formé."""
+    return _read_stats(data)[0]
+
+
+def read_match_live(data):
+    """PKT_MATCH_LIVE complet : le dict de read_match_stats, plus minute et half."""
+    stats, off = _read_stats(data)
+    if off + 2 > len(data):
+        raise ValueError("minute manquante")
+    stats["minute"], stats["half"] = data[off], data[off + 1]
+    return stats
+
+
+def make_match_live(match_id, teams, minute, half=0, golden_goal=False, heat_size=(12, 8)):
+    """Pour les tests : le corps d'un PKT_MATCH_LIVE."""
+    return make_match_stats(match_id, teams, golden_goal, heat_size) + bytes([minute, half])
+
+
+def _read_stats(data):
     off = LOBBY_HEAD_SIZE
     match_id, flags, heat_d, heat_l = _MS_HEAD.unpack_from(data, off)
     off += _MS_HEAD.size
@@ -337,15 +362,20 @@ def read_match_stats(data):
         for _ in range(n):
             number, slot, goals, pshots, ppasses, pok, prec, distance, depth, lateral = _MS_PLAYER.unpack_from(data, off)
             off += _MS_PLAYER.size
+            origin_role = None
+            if slot >= SLOT_ORIGIN:
+                origin_role = ORIGIN_ROLES[1 if slot & SLOT_ORIGIN_ATT else 0]
+                slot &= 0x07
             t["players"].append(dict(number=number, slot=slot, goals=goals, shots=pshots, passes=ppasses, passes_ok=pok,
-                                     recoveries=prec, distance=distance, depth=depth / 255.0, lateral=lateral / 255.0))
+                                     recoveries=prec, distance=distance, depth=depth / 255.0, lateral=lateral / 255.0,
+                                     origin_role=origin_role))
         if off + 2 * cells > len(data):
             raise ValueError("heatmaps tronquées")
         t["heatmap"] = list(data[off:off + cells])
         t["ball_heatmap"] = list(data[off + cells:off + 2 * cells])
         off += 2 * cells
         teams.append(t)
-    return dict(match_id=match_id, golden_goal=bool(flags & MS_GOLDEN), heat_size=(heat_d, heat_l), teams=teams)
+    return dict(match_id=match_id, golden_goal=bool(flags & MS_GOLDEN), heat_size=(heat_d, heat_l), teams=teams), off
 
 
 def make_match_stats(match_id, teams, golden_goal=False, heat_size=(12, 8)):
@@ -367,7 +397,10 @@ def make_match_stats(match_id, teams, golden_goal=False, heat_size=(12, 8)):
                                SHOT_RESULTS.index(s["result"]))
         out.append(len(t["players"]))
         for p in t["players"]:
-            out += _MS_PLAYER.pack(p["number"], p["slot"], p["goals"], p["shots"], p["passes"], p["passes_ok"],
+            slot = p["slot"]
+            if p.get("origin_role"):
+                slot = SLOT_ORIGIN | (SLOT_ORIGIN_ATT if p["origin_role"] == ORIGIN_ROLES[1] else 0) | slot
+            out += _MS_PLAYER.pack(p["number"], slot, p["goals"], p["shots"], p["passes"], p["passes_ok"],
                                    p["recoveries"], p["distance"], round(p["depth"] * 255), round(p["lateral"] * 255))
         out += bytes(t["heatmap"]) + bytes(t["ball_heatmap"])
     return bytes(out)

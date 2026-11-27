@@ -507,7 +507,8 @@ public class SoccerMainMenuModule extends SoccerMenuModule {
 
          // [mod] test du salon sans souris (NetAuto dans debugconf.scr) : dernier profil utilisé, droit au menu principal
          java.util.Vector vPlayers = GameSerializeSettings.Logic.m_Players;
-         if (ModLobby.m_nAuto != 0 && SoccerGame.m_bMenuON && vPlayers.size() > 0) {
+         // (de même pour un match de méta IA contre IA, ModMeta)
+         if ((ModLobby.m_nAuto != 0 || ModMeta.IsActive()) && SoccerGame.m_bMenuON && vPlayers.size() > 0) {
             int nLast = SoccerGame.m_cSettings.m_nLastPlayerIndex;
             CoreLogic.SetPlayer((PlayerSave)vPlayers.elementAt(nLast >= 0 && nLast < vPlayers.size() ? nLast : 0));
             m_nCurUI = 0;

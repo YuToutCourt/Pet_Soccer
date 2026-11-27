@@ -5,18 +5,19 @@ export interface BarItem {
   label: ReactNode;
   n: number;
   w: number;
+  d?: number; // nuls, comptés ½ victoire
 }
 
-/** Liste de barres horizontales : longueur = nombre de matchs, pastille = taux de victoire. */
+/** Liste de barres horizontales : longueur = nombre de matchs, pastille = score (nul = ½ victoire). */
 export default function BarList({ items, unit = "match" }: { items: BarItem[]; unit?: string }) {
   const max = Math.max(1, ...items.map((i) => i.n));
   return (
     <ul className="space-y-2.5">
       {items.map((it) => {
-        const wr = it.n ? Math.round((100 * it.w) / it.n) : 0;
+        const wr = it.n ? Math.round((100 * (it.w + (it.d ?? 0) / 2)) / it.n) : 0;
         const tone = wr >= 55 ? "text-win" : wr < 45 ? "text-loss" : "text-draw";
         return (
-          <li key={it.key} title={`${it.n} ${unit}${it.n > 1 ? "s" : ""}, ${wr} % de victoires`}>
+          <li key={it.key} title={`${it.n} ${unit}${it.n > 1 ? "s" : ""}, ${it.w} V${it.d != null ? `, ${it.d} N` : ""}, score ${wr} %`}>
             <div className="mb-1 flex items-center justify-between gap-3 text-sm">
               <span className="min-w-0 truncate font-bold">{it.label}</span>
               <span className="shrink-0 tabular text-ink-dim">

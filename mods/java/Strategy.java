@@ -763,7 +763,9 @@ public class Strategy {
       float fHorizontDist = cShot.m_vDest.fX - cGK.GetPosition().fX;
       float fVecticalDist = cShot.m_vDest.fY - cGK.GetPosition().fY;
       boolean bLeft = false;
-      if (!(fHorizontDist > this.m_fThrowScope) && !(fVecticalDist > this.m_fUpScope)) {
+      // [mod] écart latéral pris en valeur absolue : le jeu d'origine ne bornait que d'un côté (un tir très écarté
+      // d'un côté faisait réagir le gardien, pas de l'autre)
+      if (!(Math.abs(fHorizontDist) > this.m_fThrowScope) && !(fVecticalDist > this.m_fUpScope)) {
          if (fHorizontDist < 0.0F) {
             if (cGK.m_nTeam == 1) {
                bLeft = true;
@@ -778,7 +780,9 @@ public class Strategy {
             bLeft = true;
          }
 
-         if (fVecticalDist > cGK.fHeight + this.m_fUpDefence) {
+         // [mod] hauteur du gardien au moins KeeperMinReach (team_stats.scr) : les petits gardiens sautent moins tôt,
+         // et leur arrêt va aussi haut (AIFootBaller, BumpDefenceBall)
+         if (fVecticalDist > ETeams.GetKeeperReach(cGK) + this.m_fUpDefence) {
             cGK.m_bJumping = true;
          }
 
@@ -982,6 +986,11 @@ public class Strategy {
       }
    }
 
+   // [mod] portée de tir du joueur : GateDistRadius (ai_params.scr) x Force (ETeams.GetShotRangeMul)
+   float ShotRadius(AIFootBaller cFBaller) {
+      return this.m_fGateDistRadius * ETeams.GetShotRangeMul(cFBaller.m_nAnimalType);
+   }
+
    AIFootBaller.Shot GetShotDescription(AIFootBaller cFBaller) {
       Vector vGatePos = null;
       boolean bLeftGate = false;
@@ -996,7 +1005,9 @@ public class Strategy {
       }
 
       float fGateDist = cFBaller.GetDistanceTo(vGatePos);
-      if (fGateDist > this.m_fGateDistRadius) {
+      // [mod] la Force agrandit la portée de tir (ForceEffects) ; la dispersion reste calculée sur le rayon de base,
+      // donc un tir de loin n'est pas plus précis, il est seulement autorisé
+      if (fGateDist > this.ShotRadius(cFBaller)) {
          return null;
       }
 
@@ -1048,6 +1059,11 @@ public class Strategy {
       switch (cShot.m_cDirAction.m_nType) {
          case 2:
             fXMove = 0.0F;
+            // [mod] RandomFloat(max) va de 0 à max : sans ça, un tir droit partait toujours du même côté du terrain
+            // (méta du 2026-11-27 : 8,5 % de buts d'un côté, 5,1 % de l'autre)
+            if (GameObject.RandomFloat(1.0F) < 0.5F) {
+               fDevX *= -1.0F;
+            }
             break;
          case 3:
             if ((cShot.m_cDirAction.m_nOrient != 1 || !bLeftGate) && (cShot.m_cDirAction.m_nOrient != 0 || bLeftGate)) {
@@ -1158,12 +1174,14 @@ public class Strategy {
       vGateDist.Sub(vPos);
       float fGateDist = vGateDist.Len();
       float fAccess = this.CalculateTraceObstacles(cAIFootBaller, vPos, vGatePos, null);
-      if (fGateDist > this.m_fGateDistRadius || fAccess < this.m_fMinPassAcces) {
+      // [mod] portée de tir selon la Force (ShotRadius)
+      float fRadius = this.ShotRadius(cAIFootBaller);
+      if (fGateDist > fRadius || fAccess < this.m_fMinPassAcces) {
          fGateDist = 0.0F;
          fAccess = 0.0F;
       }
 
-      fGateDist = 1.0F - fGateDist / this.m_fGateDistRadius;
+      fGateDist = 1.0F - fGateDist / fRadius;
       cSituation.m_fGateDistance = fGateDist;
       cSituation.m_fAccess = fAccess;
    }

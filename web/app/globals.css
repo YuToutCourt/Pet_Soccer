@@ -226,6 +226,17 @@ body {
   .data-table tbody tr:hover {
     background: rgba(255, 244, 160, 0.04);
   }
+  /* Tableaux larges : en-têtes sur deux lignes, cases plus serrées. */
+  .data-table-compact th {
+    white-space: normal;
+    vertical-align: bottom;
+    padding: 0.6rem 0.55rem;
+    line-height: 1.25;
+  }
+  .data-table-compact td {
+    padding: 0.6rem 0.55rem;
+    white-space: nowrap;
+  }
 }
 
 @keyframes float-ball {

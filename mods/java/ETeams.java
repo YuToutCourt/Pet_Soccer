@@ -25,6 +25,14 @@ public class ETeams {
    private static float m_fShotPowerPerPoint = 0.01F;
    private static float m_fShotDeviationPerPoint = 0.03F;
    private static float m_fSpeedPerPoint = 0.005F;
+   // [mod] ForceEffects(a, c) : la Force change aussi la portée de tir (a) et, au-dessus de 90, remonte la limite
+   // tir droit / lob (c) : plus de tirs droits en hauteur, moins de lobs (0 = désactivé)
+   private static float m_fShotRangePerPoint = 0.0F;
+   private static float m_fLobThresholdPerPoint = 0.0F;
+   // [mod] KeeperMinReach(h) : hauteur minimale d'un gardien pour l'arrêt et le saut (0 = taille du modèle)
+   private static float m_fKeeperMinReach = 0.0F;
+   // [mod] KeeperMinWidth(w) : largeur minimale d'un gardien pour la portée de l'arrêt sur le côté (0 = taille du modèle)
+   private static float m_fKeeperMinWidth = 0.0F;
 
    static void LoadStats() {
       if (m_bStatsLoaded) {
@@ -63,6 +71,19 @@ public class ETeams {
             m_fShotDeviationPerPoint = key.GetFParam(1) / 100.0F;
             m_fSpeedPerPoint = key.GetFParam(2) / 100.0F;
          }
+
+         if (key.Equals("ForceEffects")) {
+            m_fShotRangePerPoint = key.GetFParam(0) / 100.0F;
+            m_fLobThresholdPerPoint = key.GetFParam(1) / 100.0F;
+         }
+
+         if (key.Equals("KeeperMinReach")) {
+            m_fKeeperMinReach = key.GetFParam(0);
+         }
+
+         if (key.Equals("KeeperMinWidth")) {
+            m_fKeeperMinWidth = key.GetFParam(0);
+         }
       }
 
       GameObject.CrashLog("[mod] stats chargees depuis " + _STATS_FILE + "\n");
@@ -88,6 +109,34 @@ public class ETeams {
    static float GetSpeedMul(int nAnimal) {
       LoadStats();
       return !IsTeamAnimal(nAnimal) ? 1.0F : Math.max(0.1F, 1.0F + (m_nSkillsTurning[nAnimal] - 90) * m_fSpeedPerPoint);
+   }
+
+   // [mod] Force : multiplicateur de la portée de tir (Strategy.ShotRadius) ; seulement un bonus au-dessus de 90 :
+   // sous 90 la portée reste celle du jeu d'origine (la pénalité faisait s'effondrer Robot et Panthère, série 2)
+   static float GetShotRangeMul(int nAnimal) {
+      LoadStats();
+      return !IsTeamAnimal(nAnimal) ? 1.0F : 1.0F + Math.max(0, m_nSkillsStrength[nAnimal] - 90) * m_fShotRangePerPoint;
+   }
+
+   // [mod] Force : multiplicateur de la hauteur au-dessus de laquelle un tir part en lob (70 dans le jeu d'origine,
+   // AIFootBaller.Shot) ; seulement au-dessus de 90 : un petit frappeur ne lobe pas plus qu'avant
+   static float GetLobThresholdMul(int nAnimal) {
+      LoadStats();
+      return !IsTeamAnimal(nAnimal) ? 1.0F : 1.0F + Math.max(0, m_nSkillsStrength[nAnimal] - 90) * m_fLobThresholdPerPoint;
+   }
+
+   // [mod] hauteur d'un gardien pour l'arrêt et le saut : au moins KeeperMinReach (aide les petits gardiens)
+   static float GetKeeperReach(FootBaller cGK) {
+      LoadStats();
+      return Math.max(cGK.fHeight, m_fKeeperMinReach);
+   }
+
+   // [mod] distance à laquelle un gardien arrête le ballon (AIFootBaller, BumpDefenceBall) : comme si le modèle
+   // faisait au moins KeeperMinWidth de large ; la hitbox, le tacle et la réception ne changent pas
+   static float GetKeeperCatchDistance(FootBaller cGK) {
+      LoadStats();
+      float fWidth = cGK.vMeshExtents == null ? 0.0F : cGK.vMeshExtents.fX;
+      return cGK.fCanAttachBallDistance + Math.max(0.0F, m_fKeeperMinWidth - fWidth) / 2.0F;
    }
 
    static int GetHomeField(int nAnimal) {

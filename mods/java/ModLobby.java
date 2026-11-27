@@ -30,6 +30,7 @@ class ModLobby {
    static final int _PKT_MATCH_STATS = 25; // [mod] statistiques du match, envoyées par le jeu de l'hôte (ModStats.PutMatchStats)
    static final int _PKT_LIVE = 26; // demande la liste des matchs qu'on peut regarder
    static final int _PKT_SPECTATE = 27; // + code du salon, match dont mon stade est chargé : je regarde ce match
+   static final int _PKT_MATCH_LIVE = 28; // [mod] statistiques du match en cours (jeu de l'hôte), pour le direct du site
    // serveur -> jeu
    static final int _PKT_INFO = 32;
    static final int _PKT_PEER = 33;
@@ -139,6 +140,8 @@ class ModLobby {
    static byte[] m_tRepStats = null; // statistiques du match fini (PKT_MATCH_STATS), prises tant que le match existe
    static int m_nRepTries = 0;
    static long m_lNextReport = 0L;
+   static long m_lNextLiveStats = 0L; // PKT_MATCH_LIVE : toutes les 10 s, et 2 s après un but
+   static final long _LIVE_STATS_EVERY = 10000L;
    // issue de mon dernier match classé, donnée par le serveur
    static int m_nResMatch = 0;
    static int m_nResOutcome = _RESULT_NONE;
@@ -930,6 +933,7 @@ class ModLobby {
          m_nRepLeft = 0;
          m_nRepRight = 0;
          m_bRepFinal = false;
+         m_lNextLiveStats = 0L;
          m_nRepTries = 0;
          m_lNextReport = 0L;
          m_bRepHost = bHost;
@@ -1044,6 +1048,22 @@ class ModLobby {
       }
    }
 
+   // [mod] le match en cours, pour la page « En direct » du site : statistiques (format de PKT_MATCH_STATS), puis
+   // minute (octet) et mi-temps (octet, 0 ou 1, 2 = but en or). Pas de réponse, perdu sans dommage.
+   private static void SendLiveStats() {
+      try {
+         ByteBuffer b = Begin(_PKT_MATCH_LIVE);
+         ModStats.PutMatchStats(b, SoccerModule.m_cMatch, m_nRepMatch);
+         AIMatch cMatch = SoccerModule.m_cMatch;
+         b.put((byte)Math.min(255, Math.max(0, ModStats.LiveMinute())));
+         b.put((byte)(cMatch.m_bGoldGoal ? 2 : Math.min(1, cMatch.m_nHalfNo)));
+         Send(b);
+      } catch (Throwable e) {
+         Log("ERREUR statistiques en direct du match " + m_nRepMatch + " : " + e);
+         m_lNextLiveStats = Long.MAX_VALUE; // une fois suffit : pas de journal plein
+      }
+   }
+
    // Avant de quitter le salon ou le serveur : la fin du match part tout de suite, deux fois
    private static void FlushReport() throws java.io.IOException {
       if (m_nRepMatch != 0 && m_bRepFinal && IsOpen() && m_nNet == _NET_ONLINE) {
@@ -1079,6 +1099,14 @@ class ModLobby {
 
          if (m_bRepFinal || nLeft != m_nRepLeft || nRight != m_nRepRight) {
             m_lNextReport = 0L;
+            if (!m_bRepFinal) {
+               m_lNextLiveStats = Math.min(m_lNextLiveStats, lNow + 2000L);
+            }
+         }
+
+         if (!m_bRepFinal && m_bRepHost && lNow >= m_lNextLiveStats && m_nNet == _NET_ONLINE) {
+            m_lNextLiveStats = lNow + _LIVE_STATS_EVERY;
+            SendLiveStats();
          }
       }
 

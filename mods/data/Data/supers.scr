@@ -22,6 +22,9 @@
 !ShotsPerLetter(i)
 !RecoveriesPerLetter(i)
 !SavesPerLetter(i)
+!CatchUpPerGoal(f)
+!CatchUpMax(f)
+!GoalLetter(i)
 
 // Remplissage de la jauge : secondes de possession par lettre (5 lettres = 1 super).
 // Jeu d'origine : 6 (30 s pour un super). 0 = garder la valeur du jeu. Vaut pour les deux equipes.
@@ -35,6 +38,14 @@ ShotsPerLetter(8)
 RecoveriesPerLetter(15)
 // arrets du gardien
 SavesPerLetter(8)
+// Rattrapage (meta du 2026-11-27 : l'equipe qui lance plus de supers gagnait 70 % de ses matchs) :
+// l'equipe menee remplit sa jauge plus vite (possession et actions), +X par but de retard, au plus xMax.
+// Version douce : +20 % par but, jamais plus de +40 %. 0 = desactive.
+CatchUpPerGoal(0.2)
+CatchUpMax(1.4)
+// Lettre donnee par un but : 0 = personne, 1 = l'equipe qui marque (jeu d'origine), 2 = l'equipe qui encaisse.
+// 0 : un but ne nourrit plus la jauge de l'equipe qui mene.
+GoalLetter(0)
 
 // Tirage du super quand la jauge se remplit : poids relatifs (0 = jamais).
 // Jeu d'origine : 25 pour chacun des 4 premiers, 0 pour les nouveaux.

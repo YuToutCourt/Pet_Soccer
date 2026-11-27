@@ -123,6 +123,23 @@ CREATE TABLE IF NOT EXISTS match_events (
 );
 CREATE INDEX IF NOT EXISTS match_events_kind ON match_events (kind);
 
+-- Temps de balle détaillé d'une équipe (matchs méta seulement : ModMeta.DiagPossession, mods/meta/meta_run.py).
+-- Secondes de match, jeu en cours (état 0) seulement.
+CREATE TABLE IF NOT EXISTS match_possession (
+    match_id integer NOT NULL REFERENCES matches (id) ON DELETE CASCADE,
+    side smallint NOT NULL,
+    hold real NOT NULL,                            -- l'équipe tient le ballon
+    loose real NOT NULL,                           -- ballon libre après sa touche (passe, tir, dégagement)
+    gk_hold real NOT NULL,                         -- dont son gardien tient le ballon
+    super_time real NOT NULL,                      -- pendant un de ses supers (le compteur du jeu ne compte rien)
+    spells smallint NOT NULL,                      -- phases de jeu : suite de touches de l'équipe
+    spells_dead smallint NOT NULL,                 -- dont finies par un arrêt de jeu (sortie, but, faute)
+    play real NOT NULL,                            -- temps de jeu du match
+    longest real NOT NULL,                         -- sa phase la plus longue
+    game_counter real NOT NULL,                    -- compteur du jeu (Team.m_fEntirePossesionTime), d'où vient possession
+    PRIMARY KEY (match_id, side)
+);
+
 -- Ligues en ligne (leagues.py) : l'état complet en JSON
 CREATE TABLE IF NOT EXISTS leagues (
     id integer PRIMARY KEY,
@@ -131,6 +148,28 @@ CREATE TABLE IF NOT EXISTS leagues (
     created double precision NOT NULL,
     updated double precision NOT NULL,
     data jsonb NOT NULL
+);
+
+-- Matchs en cours (page « En direct » du site), réécrite toutes les 3 s par le serveur de jeu (Lobby.live_rows).
+-- Un match fini y reste 5 min (ended, avec son numéro dans matches) ; la table entière est remplacée à chaque écriture.
+CREATE TABLE IF NOT EXISTS live_matches (
+    key text PRIMARY KEY,                          -- code du salon + numéro du match chez les jeux
+    kind text NOT NULL,                            -- ranked | private | league
+    started_at timestamptz,
+    updated timestamptz NOT NULL,
+    host_id integer, host_name text NOT NULL, host_animal smallint, host_elo integer,
+    guest_id integer, guest_name text NOT NULL, guest_animal smallint, guest_elo integer,
+    score_host smallint NOT NULL,
+    score_guest smallint NOT NULL,
+    minute smallint,                               -- NULL : le jeu de l'hôte n'envoie pas le direct (mod < v13)
+    half smallint,                                 -- 0, 1, 2 = but en or
+    half_seconds smallint,
+    stadium smallint,
+    spectators smallint NOT NULL DEFAULT 0,
+    stats jsonb,                                   -- dernier PKT_MATCH_LIVE (protocol.read_match_live), sans heatmaps
+    ended boolean NOT NULL DEFAULT false,
+    outcome text,                                  -- played | forfeit | void, une fois fini
+    match_id integer                               -- numéro dans matches une fois enregistré
 );
 
 -- Ce qui se passe sur le serveur de jeu en ce moment (une seule ligne, réécrite toutes les 10 s)

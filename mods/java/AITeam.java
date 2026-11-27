@@ -1,6 +1,11 @@
 public class AITeam extends Team {
    // [mod] actions comptées pour la jauge SUPER (ModSupers.AddAction) : tirs, récupérations, arrêts
    int[] m_nModSuperActions = new int[3];
+   // [mod] possession cumulée pour les lettres de rattrapage de l'équipe menée (ModSupers.UpdateCatchUp)
+   float m_fModCatchUpTime = 0.0F;
+   // [mod] diagnostic de la possession des matchs méta (ModMeta.DiagPossession)
+   float[] m_fModDiag = new float[ModMeta._DIAG_N];
+   float m_fModDiagLast = -1.0F;
    AISystem m_cAISystem = null;
    Order m_cOrder = null;
    boolean m_bInited = false;
@@ -42,8 +47,10 @@ public class AITeam extends Team {
 
    public void Update() {
       super.Update();
+      ModMeta.DiagPossession(this); // [mod] diagnostic de la possession (matchs méta), observe seulement
       ModOptions.UpdateTeam(this); // [mod] super imposé / supers infinis (menu Mods)
       ModSupers.Update(this); // [mod] gel, ballon fou, aimant, tir double
+
       if (this.m_bInited) {
          if (this.IsStabilization()) {
             this.UpdateStabilization();

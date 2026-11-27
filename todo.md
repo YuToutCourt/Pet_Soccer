@@ -4,11 +4,16 @@ Un joueur peut modifier les stats d'équipe et cela est utiliser pour le multi (
 
 ## MODIFICATION
 
-Les super à garder entre les mi-temps
-Tout les X tir stack du super
-Trouver d'autre moyen d'avoir des super
-
 Pouvoir changer les touches de changement de joueur 123456 à ce qu'on veut
 
+ajouter le ping en game multi pour le joueur guest
 
-Faire un SUPER "The WORLD" comme dans JOJO qui arrête le temps et un seul joueur peut bouger avec le bruitage et l'ecran en noir et blanc et tes persos qui laisse un eco derriere eux
+Rendre l'installation plus facile
+
+Faire au moins en anglais
+
+Fix la résolution, fenêtrer sans bord
+
+Revoir l'élo range, mettre plus de rank (genre bois 2 bois 1, bronze 2 bronze 1 etc)
+
+C'est pas normal que de 0 à 600 on est bois puis après c'est tout les 200 élo on change de rang

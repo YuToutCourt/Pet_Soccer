@@ -16,9 +16,12 @@ class ModNet {
    static final int _MAGIC = 0x50534E31; // "PSN1"
    // Version du mod pour le jeu en ligne : à augmenter dès que les paquets ou les règles du match changent.
    // Le serveur ne met dans un même salon que deux jeux de même version.
-   static final int _MOD_VERSION = 10; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
+   static final int _MOD_VERSION = 13; // 6 : ligue en ligne (match entre amis, but en or en playoffs) ; 7 : caméra propre au client ;
    // 8 : statistiques des matchs en ligne (PKT_MATCH_STATS), matchs des salons privés enregistrés par le serveur ;
    // 9 : secret de session avec le serveur (dialogue 6) ; 10 : spectateurs (copie de l'état pour eux, dialogue 7)
+   // 11 : équilibrage après la méta (Force : portée et hauteur des tirs, gardiens, jauge de rattrapage)
+   // 12 : largeur minimale des gardiens (KeeperMinWidth), plus de pénalité de portée sous Force 90
+   // 13 : match en direct sur le site (PKT_MATCH_LIVE), rôle des joueurs du jeu d'origine et heatmap sans gardien
    static final int _ROLE_NONE = 0;
    static final int _ROLE_HOST = 1;
    static final int _ROLE_CLIENT = 2;
@@ -853,6 +856,8 @@ class ModNet {
       } else if (m_nRole == _ROLE_HOST && m_nHalfSeconds > 0) {
          cMatch.m_nHalfTime = m_nHalfSeconds; // durée choisie par l'hôte dans le salon
       }
+
+      ModMeta.OnTeamsReady(cMatch); // [mod] match de méta : durée d'une partie classée
    }
 
    // Le match de l'hôte a-t-il les équipes inversées par rapport au début (seconde mi-temps) ?

@@ -384,7 +384,11 @@ class ModStats {
             Vector v = cFB.GetPosition();
             float fDepth = ModTactics.Clamp(ModTactics.Depth(cFB.m_nTeam, v), 0.0F, 1.0F);
             float fLateral = ModTactics.LateralOf(v);
-            t.m_tHeat[HeatCell(fDepth, fLateral)]++;
+            if (!cFB.IsGoalKeeper()) {
+               // sans le gardien, toujours dans sa surface : il serait la case la plus chaude de chaque match
+               t.m_tHeat[HeatCell(fDepth, fLateral)]++;
+            }
+
             PlayerStats p = GetPlayer(cFB);
             p.m_fSumDepth += fDepth;
             p.m_fSumLateral += fLateral;
@@ -489,7 +493,7 @@ class ModStats {
             AIFootBaller cFB = (AIFootBaller)vPlayers.elementAt(i);
             PlayerStats p = GetPlayer(cFB);
             b.put((byte)GetListIndex(cFB));
-            b.put((byte)ModTactics.GetSlot(cFB));
+            b.put((byte)ModTactics.GetStatsSlot(cFB));
             b.put((byte)Clip(p.m_nGoals, 255));
             b.put((byte)Clip(p.m_nShots, 255));
             b.put((byte)Clip(p.m_nPasses, 255));
@@ -518,6 +522,11 @@ class ModStats {
       for (int i = 0; i < tHeat.length; i++) {
          b.put((byte)(nMax > 0 ? (int)((long)tHeat[i] * 255L / nMax) : 0));
       }
+   }
+
+   // [mod] en ligne : minute du match en cours (PKT_MATCH_LIVE)
+   static int LiveMinute() {
+      return SoccerModule.m_cMatch != null ? GetMinute(SoccerModule.m_cMatch, GetTime()) : 0;
    }
 
    // minute « football » (90 min) à partir du temps réel du match

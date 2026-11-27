@@ -123,7 +123,7 @@ par l'état du salon : une perte se rattrape au paquet suivant.
   numéro du match en cours (0 = il est dans le salon), équipes et tenues retenues pour ce match.
 - **Départ** : l'hôte tire un numéro de match, l'envoie, puis charge le stade. L'invité qui voit un numéro de match
   qu'il n'a pas encore joué charge le même match. Les réglages viennent tous de l'hôte.
-- **Version** : `ModNet._MOD_VERSION` (9 depuis le secret de session ; 8 depuis les statistiques en ligne ; 7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
+- **Version** : `ModNet._MOD_VERSION` (11 depuis l'équilibrage de la méta, `notes/team-stats.md` ; 10 depuis les spectateurs ; 9 depuis le secret de session ; 8 depuis les statistiques en ligne ; 7 depuis la caméra propre au client ; 6 depuis le match entre amis de la ligue en ligne). Le serveur refuse l'entrée dans un salon dont l'hôte a une autre version,
   et la file d'attente ne réunit que des joueurs de même version. À augmenter dès que les paquets ou les règles du
   match changent.
 - **Version du dialogue** : `ModLobby._LOBBY_PROTO` et `protocol.LOBBY_PROTO` (3 depuis la phase 5, 4 depuis la
@@ -407,6 +407,7 @@ Tout match en ligne (partie classée, ligue entre amis, salon privé) est enregi
 | `match_players` | un côté (0 = hôte) : compte, nom, équipe, tenue, résultat W/D/L, Elo avant/après, **tactique** (schéma, 6 rôles, placements des 4 situations, ligne brute), stats d'équipe, heatmaps |
 | `match_footballers` | les 7 joueurs : place dans `Team<Animal>Players` (0 = gardien), place et rôle dans la tactique, buts, csc, tirs, passes, récupérations, distance, position moyenne |
 | `match_events` | fil du match : buts, csc, supers (minute, type), tirs (minute, tireur, position, issue) |
+| `live_matches` | matchs en cours pour la page « En direct » du site (mod v13, `PKT_MATCH_LIVE` toutes les 10 s depuis le jeu de l'hôte), réécrite toutes les 3 s ; un match fini y reste 5 min avec son numéro dans `matches` |
 | `leagues`, `server_status` | ligues en ligne ; état du serveur (joueurs connectés, en file, matchs en cours), réécrit toutes les 10 s |
 
 - Les équipes, le stade et les tactiques viennent du dernier `STATE` de chaque jeu portant le numéro du match (une
@@ -416,6 +417,9 @@ Tout match en ligne (partie classée, ligue entre amis, salon privé) est enregi
   sont ignorées. Arrivées avant la fin du match, elles attendent (`Lobby.pending_stats`) ; juste après, elles
   sont ajoutées au match déjà enregistré (`Lobby.recorded`). Un hôte dont le jeu plante : match sans statistiques
   (`has_stats = false`).
+- Mod v13 : un joueur du jeu d'origine a sa place par points d'apparition et le rôle `ORIGINE_DEF` / `ORIGINE_ATT`
+  (type moteur) ; la heatmap de l'équipe ne compte plus le gardien (le site plafonne son coin pour les matchs d'avant).
+- Direct de démo : `python server\seed_demo.py --live` (faux matchs dans `live_matches` jusqu'à Ctrl+C).
 - Positions : repère de l'écran Tactique (profondeur 0 = son but, latéral 0 = haut de l'écran), voir `notes/stats.md`.
 - Site : `web\` (Next.js 16, connexion en lecture seule, image Docker à part) : accueil (présentation du mod, téléchargement de
   la dernière Release GitHub), classement, matchs, profil (courbe d'Elo, forme,

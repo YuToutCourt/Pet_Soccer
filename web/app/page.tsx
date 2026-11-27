@@ -216,7 +216,7 @@ async function Totals() {
 
 async function TopPlayers() {
   await connection();
-  const players = await getLeaderboard("", 5).catch(() => []);
+  const players = await getLeaderboard("", null, 5).catch(() => []);
   return (
     <div className="card p-5">
       <SectionTitle right={<Link href="/classement" className="text-sm font-bold text-gold-300 hover:underline">Tout le classement →</Link>}>

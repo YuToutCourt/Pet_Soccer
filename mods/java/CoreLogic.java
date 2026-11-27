@@ -215,6 +215,11 @@ public class CoreLogic {
    }
 
    static int GetDiffLevel() {
+      // [mod] match de méta IA contre IA : le niveau demandé
+      if (ModMeta.IsActive()) {
+         return ModMeta.m_nLevel;
+      }
+
       // [mod] en ligne : niveau fixe pour l'IA des coéquipiers, quel que soit le profil de l'hôte (data\online.scr)
       if (ModNet.IsOnline()) {
          return ModLobby.GetTeammateLevel();

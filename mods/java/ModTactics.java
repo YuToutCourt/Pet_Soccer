@@ -127,6 +127,19 @@ class ModTactics {
    private static Hashtable m_tTeamSchemes = new Hashtable(); // type d'animal -> id de schéma
    private static String m_sHumanScheme = _ORIGIN;
    private static String m_sAIScheme = _ORIGIN;
+   // [mod] tactiques variées de l'IA : schéma tiré à chaque match, changé à la mi-temps selon le score
+   private static boolean m_bAIVary = false;
+   private static java.util.Vector m_vAIPool = new java.util.Vector(); // ids de schéma
+   private static java.util.Vector m_vAIWeights = new java.util.Vector(); // Float
+   private static float m_fAIFavorite = 0.0F; // chance de jouer le schéma préféré de l'équipe (TeamScheme)
+   private static float m_fAIAdaptChance = 0.0F;
+   private static int m_nAIAdaptLosing = 1; // retard (buts) à la mi-temps pour passer à m_sAIAdaptLosing
+   private static int m_nAIAdaptWinning = 2; // avance pour passer à m_sAIAdaptWinning
+   private static String m_sAIAdaptLosing = "ATTAQUE";
+   private static String m_sAIAdaptWinning = "BETON";
+   private static Hashtable m_tMatchSchemes = new Hashtable(); // Team -> id de schéma du match en cours
+   private static Hashtable m_tGoals = new Hashtable(); // Team -> Integer, buts marqués dans le match
+   private static int m_nLastHalf = 0;
    private static float m_fHumanMarking = 1.0F;
    private static float m_fHumanMarkDistance = 150.0F;
    private static Hashtable m_tSaved = new Hashtable(); // "profil;animal" -> Composition
@@ -220,6 +233,19 @@ class ModTactics {
             m_sHumanScheme = key.GetSParam(0);
          } else if (key.Equals("AIScheme")) {
             m_sAIScheme = key.GetSParam(0);
+         } else if (key.Equals("AIVary")) {
+            m_bAIVary = key.GetIParam(0) != 0;
+         } else if (key.Equals("AISchemeWeight")) {
+            m_vAIPool.addElement(key.GetSParam(0));
+            m_vAIWeights.addElement(new Float(key.GetFParam(1)));
+         } else if (key.Equals("AIFavorite")) {
+            m_fAIFavorite = key.GetFParam(0);
+         } else if (key.Equals("AIAdapt")) {
+            m_fAIAdaptChance = key.GetFParam(0);
+            m_nAIAdaptLosing = key.GetIParam(1);
+            m_nAIAdaptWinning = key.GetIParam(2);
+            m_sAIAdaptLosing = key.GetSParam(3);
+            m_sAIAdaptWinning = key.GetSParam(4);
          } else if (key.Equals("HumanMarking")) {
             m_fHumanMarking = key.GetFParam(0);
          } else if (key.Equals("HumanMarkDistance")) {
@@ -669,13 +695,98 @@ class ModTactics {
          m_cLastMatch = cMatch;
          m_tPlayers.clear();
          m_tMarks.clear();
+         m_tMatchSchemes.clear();
+         m_tGoals.clear();
+         m_nLastHalf = cMatch.m_nHalfNo;
          if (!m_bFieldLogged) {
             m_bFieldLogged = true;
             LogField(cMatch);
          }
       }
 
+      if (m_nLastHalf == 0 && cMatch.m_nHalfNo == 1) {
+         m_nLastHalf = 1;
+         AdaptAtHalfTime(cMatch);
+      }
+
       ApplyTeams(cMatch);
+   }
+
+   // appelé par AIMatch.OnGoal (nTeam = équipe qui marque, indice du moment)
+   static void OnGoal(AIMatch cMatch, int nTeam) {
+      Team cTeam = cMatch.GetTeam(nTeam);
+      if (cTeam != null) {
+         m_tGoals.put(cTeam, new Integer(Goals(cTeam) + 1));
+      }
+   }
+
+   private static int Goals(Team cTeam) {
+      Integer n = (Integer)m_tGoals.get(cTeam);
+      return n != null ? n.intValue() : 0;
+   }
+
+   // l'IA ne choisit son schéma que si rien ne l'impose (joueur, en ligne, méta)
+   private static boolean VariesScheme(Team cTeam) {
+      return m_bAIVary && !ModMeta.IsActive() && ModNet.RemoteComposition(cTeam) == null
+         && (!cTeam.m_bUserControled || CoreLogic.m_bDemo);
+   }
+
+   // mi-temps : une IA menée passe à l'attaque, une IA qui mène nettement ferme le jeu (chance m_fAIAdaptChance)
+   private static void AdaptAtHalfTime(AIMatch cMatch) {
+      for (int t = 0; t < 2; t++) {
+         Team cTeam = cMatch.GetTeam(t);
+         Team cOther = cMatch.GetTeam(1 - t);
+         if (cTeam == null || cOther == null || !VariesScheme(cTeam)) {
+            continue;
+         }
+
+         int nDiff = Goals(cTeam) - Goals(cOther);
+         String sNew = null;
+         if (nDiff <= -m_nAIAdaptLosing) {
+            sNew = m_sAIAdaptLosing;
+         } else if (nDiff >= m_nAIAdaptWinning) {
+            sNew = m_sAIAdaptWinning;
+         }
+
+         String sOld = (String)m_tMatchSchemes.get(cTeam);
+         if (sNew == null || sNew.equals(sOld) || GetScheme(sNew) == null || GameObject.RandomFloat(1.0F) >= m_fAIAdaptChance) {
+            continue;
+         }
+
+         m_tMatchSchemes.put(cTeam, sNew);
+         GameObject.CrashLog("[mod] tactique IA : animal " + cTeam.m_nAnimalType + " passe de " + sOld + " a " + sNew
+            + " a la mi-temps (" + Goals(cTeam) + "-" + Goals(cOther) + ")\n");
+      }
+   }
+
+   // schéma tiré au début du match : le préféré de l'équipe (TeamScheme) avec la chance AIFavorite, sinon AISchemeWeight
+   private static String DrawScheme(Team cTeam) {
+      String sFavorite = (String)m_tTeamSchemes.get(new Integer(cTeam.m_nAnimalType));
+      if (sFavorite != null && GetScheme(sFavorite) != null && GameObject.RandomFloat(1.0F) < m_fAIFavorite) {
+         return sFavorite;
+      }
+
+      float fTotal = 0.0F;
+      for (int i = 0; i < m_vAIPool.size(); i++) {
+         if (GetScheme((String)m_vAIPool.elementAt(i)) != null) {
+            fTotal += ((Float)m_vAIWeights.elementAt(i)).floatValue();
+         }
+      }
+
+      if (fTotal > 0.0F) {
+         float f = GameObject.RandomFloat(fTotal);
+         for (int i = 0; i < m_vAIPool.size(); i++) {
+            String sId = (String)m_vAIPool.elementAt(i);
+            if (GetScheme(sId) != null) {
+               f -= ((Float)m_vAIWeights.elementAt(i)).floatValue();
+               if (f < 0.0F) {
+                  return sId;
+               }
+            }
+         }
+      }
+
+      return sFavorite != null ? sFavorite : m_sAIScheme;
    }
 
    // (ré)applique la composition des deux équipes, aussi après un changement en cours de match
@@ -699,8 +810,31 @@ class ModTactics {
          return GetComposition(cTeam.m_nAnimalType);
       }
 
-      String sScheme = (String)m_tTeamSchemes.get(new Integer(cTeam.m_nAnimalType));
+      // [mod] méta : schéma imposé par MetaSchemes (matchs de tactique)
+      String sMeta = ModMeta.Scheme(cTeam);
+      if (sMeta != null) {
+         return MakeComposition(sMeta);
+      }
+
+      if (VariesScheme(cTeam)) {
+         String sDrawn = (String)m_tMatchSchemes.get(cTeam);
+         if (sDrawn == null) {
+            sDrawn = DrawScheme(cTeam);
+            m_tMatchSchemes.put(cTeam, sDrawn);
+            GameObject.CrashLog("[mod] tactique IA : animal " + cTeam.m_nAnimalType + " joue " + sDrawn + "\n");
+         }
+
+         return MakeComposition(sDrawn);
+      }
+
+      // avec AIVary, TeamScheme n'est qu'un schéma préféré : la méta garde AIScheme pour toutes les équipes
+      String sScheme = m_bAIVary ? null : (String)m_tTeamSchemes.get(new Integer(cTeam.m_nAnimalType));
       return MakeComposition(sScheme != null ? sScheme : m_sAIScheme);
+   }
+
+   // [mod] méta : la composition jouée par une équipe, en ligne (ToLine)
+   static String TeamLine(Team cTeam) {
+      return cTeam != null ? ToLine(GetTeamComposition(cTeam)) : "";
    }
 
    private static float SpawnDepth(AIFootBaller cFB) {
@@ -865,6 +999,28 @@ class ModTactics {
    static int GetSlot(AIFootBaller cFB) {
       PlayerInfo info = (PlayerInfo)m_tPlayers.get(cFB);
       return info != null && info.m_cRole != null ? info.m_nSlot : -1;
+   }
+
+   // [mod] en ligne (ModStats.PutMatchStats) : GetSlot, et pour un joueur de champ du jeu d'origine sa place par
+   // points d'apparition (GetNumbered) + _STATS_ORIGIN, + _STATS_ORIGIN_ATT s'il est attaquant pour le moteur
+   static final int _STATS_ORIGIN = 0x10;
+   static final int _STATS_ORIGIN_ATT = 0x08;
+
+   static int GetStatsSlot(AIFootBaller cFB) {
+      int nSlot = GetSlot(cFB);
+      if (nSlot >= 0 || cFB.IsGoalKeeper()) {
+         return nSlot;
+      }
+
+      AIFootBaller[] tFB = GetNumbered(cFB.m_cTeam);
+
+      for (int k = 0; tFB != null && k < tFB.length; k++) {
+         if (tFB[k] == cFB) {
+            return _STATS_ORIGIN | (GetOrigType(cFB) == 0 ? _STATS_ORIGIN_ATT : 0) | k;
+         }
+      }
+
+      return -1;
    }
 
    // ---------------------------------------------------------------- placement en match

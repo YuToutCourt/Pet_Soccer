@@ -95,7 +95,7 @@ class SoccerModule extends Module {
       m_cMatch.SetSpaceActive(false);
       this.StartFadeOut();
       ModNet.OnSpeedUp(1.0F); // [mod] en ligne
-      this.TimerSetSpeedUp(1.0F);
+      this.TimerSetSpeedUp(ModMeta.Speed(1.0F)); // [mod] méta : temps accéléré
       this.CallMethodIn(sMethodName, this.m_fFadeTime);
    }
 

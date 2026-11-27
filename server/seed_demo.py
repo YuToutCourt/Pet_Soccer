@@ -145,7 +145,9 @@ def team_stats(rng, roles, layout, goals, shots, possession, saves, opp_shots_sa
     players[0]["passes_ok"] = players[0]["passes"]
     for k in range(6):
         d, l = layout[k]
-        players.append(dict(number=numbers[k], slot=k if roles else -1, goals=p_goals[k], shots=p_shots[k], passes=p_passes[k],
+        # jeu d'origine (mod v13) : place par points d'apparition, défenseurs derrière, attaquants devant
+        origin = None if roles else ("ORIGINE_DEF" if k < 3 else "ORIGINE_ATT")
+        players.append(dict(number=numbers[k], slot=k, origin_role=origin, goals=p_goals[k], shots=p_shots[k], passes=p_passes[k],
                             passes_ok=p_ok[k], recoveries=p_rec[k], distance=int(rng.uniform(230, 420) * scale),
                             depth=clamp(d + rng.gauss(0.04, 0.05), 0.05, 0.95), lateral=clamp(l + rng.gauss(0, 0.06), 0.05, 0.95)))
     passes = sum(p["passes"] for p in players)
@@ -181,7 +183,8 @@ def team_stats(rng, roles, layout, goals, shots, possession, saves, opp_shots_sa
     super_types = 0
     for s in super_events:
         super_types |= 1 << s["type"]
-    heat = blob_heat([(p["depth"], p["lateral"], 1.0) for p in players] +
+    # sans le gardien (mod v13)
+    heat = blob_heat([(p["depth"], p["lateral"], 1.0) for p in players[1:]] +
                      [(clamp(p["depth"] + 0.12), p["lateral"], 0.5) for p in players[1:]])
     att = sum(p["depth"] for p in players[1:]) / 6
     ball = blob_heat([(clamp(att + 0.15), 0.5, 1.0), (clamp(att + 0.3), rng.uniform(0.2, 0.8), 0.7),
@@ -245,6 +248,70 @@ def fake_match(rng, home, away, guest_name, kind, half):
     return sides, (goals_a, goals_b), stats
 
 
+def fake_live(store, rng, count=3, step=3.0):
+    """Faux matchs en direct : une minute de match toutes les step s, comme les écrirait le serveur (Lobby.live_rows).
+    Chaque match fini reste affiché 5 min puis laisse sa place à un nouveau."""
+    players = store.db.all("SELECT id, name, elo FROM players WHERE games > 0 ORDER BY random() LIMIT 40")
+    if len(players) < 2:
+        raise SystemExit("pas assez de joueurs : lancer d'abord seed_demo.py sans --live")
+    last_match = store.db.one("SELECT max(id) FROM matches")[0]
+
+    class Fake:
+        def __init__(self, n):
+            a, b = rng.sample(players, 2)
+            self.key = "DEMO%d-%d" % (n, rng.randint(1, 99999))
+            self.kind = rng.choice(["ranked", "ranked", "league", "private"])
+            self.a, self.b = a, b
+            self.animals = (rng.randrange(14), rng.randrange(14))
+            self.home = FakePlayer(rng, a[1], 0)
+            self.away = FakePlayer(rng, b[1], 1)
+            self.sides, self.score, self.stats = fake_match(rng, self.home, self.away, b[1], self.kind, 240)
+            self.minute = rng.randint(0, 30)
+            self.started = time.time() - self.minute * 2.7
+            self.ended_at = None
+
+        def row(self):
+            m = self.minute
+            teams = []
+            for t in self.stats["teams"]:
+                cut = dict(t)
+                cut["goals"] = [g for g in t["goals"] if g["minute"] <= m]
+                cut["super_events"] = [s for s in t["super_events"] if s["minute"] <= m]
+                cut["shot_events"] = [s for s in t["shot_events"] if s["minute"] <= m]
+                cut["shots"] = len(cut["shot_events"])
+                cut["supers"] = len(cut["super_events"])
+                for k in ("passes", "passes_ok", "recoveries"):
+                    cut[k] = int(t[k] * m / 90)
+                cut["saves"] = int(t["saves"] * m / 90)
+                del cut["heatmap"], cut["ball_heatmap"]
+                teams.append(cut)
+            ended = self.ended_at is not None
+            return dict(key=self.key, kind=self.kind, started=self.started, host_id=self.a[0], host_name=self.a[1],
+                        host_animal=self.animals[0], host_elo=self.a[2], guest_id=self.b[0], guest_name=self.b[1],
+                        guest_animal=self.animals[1], guest_elo=self.b[2],
+                        score_host=len(teams[0]["goals"]), score_guest=len(teams[1]["goals"]),
+                        minute=min(m, 90), half=0 if m <= 45 else 1, half_seconds=240, stadium=rng.randrange(15),
+                        spectators=rng.randint(0, 3), stats=dict(golden_goal=False, teams=teams), ended=ended,
+                        outcome="played" if ended else None, match_db=last_match if ended else None)
+
+    games = [Fake(i) for i in range(count)]
+    print("faux matchs en direct dans live_matches (Ctrl+C pour arrêter)")
+    try:
+        while True:
+            for i, g in enumerate(games):
+                if g.ended_at is None:
+                    g.minute += 1
+                    if g.minute > 90:
+                        g.minute = 90
+                        g.ended_at = time.time()
+                elif time.time() - g.ended_at > 300:
+                    games[i] = Fake(i)
+            store.write_live([g.row() for g in games])
+            time.sleep(step)
+    except KeyboardInterrupt:
+        store.write_live([])
+
+
 def demo_url(url=None, force=False):
     url = url or DEFAULT_URL.format(password=os.environ.get("POSTGRES_PASSWORD", "toor"))
     info = psycopg.conninfo.conninfo_to_dict(url)
@@ -271,8 +338,17 @@ def main():
     ap.add_argument("--days", type=int, default=45, help="les matchs sont étalés sur ce nombre de jours")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--force", action="store_true", help="accepte une base locale d'un autre nom (elle est vidée)")
+    ap.add_argument("--live", action="store_true",
+                    help="ne vide rien : joue de faux matchs en direct (live_matches) jusqu'à Ctrl+C, pour la page « En direct »")
     args = ap.parse_args()
     rng = random.Random(args.seed)
+    if args.live:
+        url = args.db or DEFAULT_URL.format(password=os.environ.get("POSTGRES_PASSWORD", "toor"))
+        name = psycopg.conninfo.conninfo_to_dict(url).get("dbname") or ""
+        if "demo" not in name and "test" not in name and not args.force:
+            raise SystemExit("refusé : le nom de la base doit contenir « demo » ou « test » (%s)" % name)
+        fake_live(Store(url), rng)
+        return
     url = demo_url(args.db, args.force)
     store = Store(url)
 
@@ -310,7 +386,7 @@ def main():
             sides, score, goals, kind=kind, rated=kind != "private", forfeit_side=forfeit_side,
             room_code="".join(rng.choice("ABCDEFGHJKLMNPQRSTUVWXYZ") for _ in range(4)),
             league=(rng.choice(league_ids), rng.randint(0, 90)) if kind == "league" else None,
-            started=t - duration, stadium=rng.choice(STADIUMS), half_seconds=half, mod_version=8,
+            started=t - duration, stadium=rng.choice(STADIUMS), half_seconds=half, mod_version=13,
             stats=stats if has_stats and rng.random() < 0.97 else None)
         when.append((match_id, t - duration, t, [s["player"].id for s in sides if s["player"] is not None]))
 

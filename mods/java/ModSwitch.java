@@ -366,13 +366,59 @@ class ModSwitch {
             // le client), y compris après le changement de côté de la mi-temps
             && (!ModNet.IsOnline() || ModNet.IsMyTeam(cTeam));
          AIFootBaller[] tFB = bTeam && (m_bShowNumbers || bMapOn) ? ModTactics.GetNumbered(cTeam) : null;
+         int nSet = tFB != null ? GetKeySet(cTeam) : 0;
 
          for (int i = 0; i < _NUMBERS; i++) {
             AIFootBaller cFB = tFB != null ? tFB[i] : null;
             boolean bFocus = cFB != null && cFB == cTeam.m_cFocusFBaller;
+            if (cFB != null) {
+               // le texte suit la touche directe choisie dans Options > Commandes
+               String sText = GetLabelText(nSet, i);
+               SetLabelText(m_tLabels[nSide][i], sText);
+               SetLabelText(m_tMapLabels[nSide][i], sText);
+            }
+
             UpdateHeadLabel(m_tLabels[nSide][i], m_bShowNumbers ? cFB : null, bFocus, cHud, cTeam);
             UpdateMapLabel(m_tMapLabels[nSide][i], bMapOn ? cFB : null, bFocus, cHud, cTeam);
          }
+      }
+   }
+
+   // jeu de touches de l'équipe (0 = joueur 1, 1 = joueur 2) ; en ligne ou sans manette connue, celui du joueur 1
+   static int GetKeySet(Team cTeam) {
+      TeamController cController = cTeam.GetTeamController();
+      int nSet = cController != null ? cController.m_nKeySet : -1;
+      return nSet == 1 && !ModNet.IsOnline() ? 1 : 0;
+   }
+
+   // nom court de la touche directe du joueur i (0..5) : « 1 », « A », « N7 », « Feu3 »… ; sans touche, le numéro
+   // Tactique - 1 comme avant (le joueur 2 n'a pas de touches par défaut)
+   static String GetLabelText(int nSet, int i) {
+      int nKey = m_tKeys[nSet][i];
+      String s = nKey >= 0 ? KbSettings.GetKeyString(nKey) : "";
+      if (s == null || s.length() == 0) {
+         return String.valueOf(i + _FIRST_NUMBER - 1);
+      }
+
+      if (s.startsWith("Numpad")) {
+         return "N" + s.substring(6);
+      }
+
+      if (s.startsWith("Num ")) {
+         return "N" + s.substring(4);
+      }
+
+      if (s.equals("LControl")) {
+         return "LCtrl";
+      }
+
+      return s;
+   }
+
+   // SetText seulement quand le texte change (appelé à chaque image)
+   static void SetLabelText(UIStatic cLabel, String sText) {
+      if (cLabel != null && !sText.equals(cLabel.GetText())) {
+         cLabel.SetText(sText);
       }
    }
 

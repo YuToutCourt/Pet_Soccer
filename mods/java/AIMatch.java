@@ -256,7 +256,7 @@ public class AIMatch extends Match {
       Match.m_cModule.DisableCallMethod("OnGoal");
       this.m_nUpdateInc = 0;
       if (CoreLogic.m_bDemo) {
-         super.m_cStrategy.FixDifficultyLevel(4);
+         super.m_cStrategy.FixDifficultyLevel(ModMeta.IsActive() ? ModMeta.m_nLevel : 4); // [mod] méta : niveau choisi
       } else {
          super.m_cStrategy.FixDifficultyLevel(CoreLogic.GetDiffLevel());
       }
@@ -1193,14 +1193,17 @@ public class AIMatch extends Match {
    void OnGoal(int nTeam, boolean bSuperShot) {
       GameObject.LogLine(" On Goal ----------------");
       ModStats.OnGoal(this, nTeam); // [mod] buteur et minute
+      ModTactics.OnGoal(this, nTeam); // [mod] score vu par l'IA pour changer de schéma à la mi-temps
       if ((nTeam != 0 || super.m_nHalfNo != 0) && (nTeam != 1 || super.m_nHalfNo != 1 || super.m_bGoldGoal) && (nTeam != 0 || !super.m_bGoldGoal)) {
          super.m_nScoreRight++;
       } else {
          super.m_nScoreLeft++;
       }
 
-      if (!bSuperShot) {
-         this.GetTeam(nTeam).IncreaseSuperFillCount();
+      // [mod] lettre du but selon GoalLetter (supers.scr) : personne, celui qui marque (jeu d'origine) ou celui qui encaisse
+      Team cLetterTeam = ModSupers.GoalLetterTeam(this, nTeam);
+      if (!bSuperShot && cLetterTeam != null) {
+         cLetterTeam.IncreaseSuperFillCount();
       }
 
       Match.m_cModule.m_nTeamLastScored = nTeam;

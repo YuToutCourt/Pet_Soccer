@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { Lilita_One, Nunito } from "next/font/google";
 import Link from "next/link";
 import { Suspense } from "react";
-import { Search } from "lucide-react";
 import LogoOnline from "@/components/LogoOnline";
 import NavLinks, { NavLinksView } from "@/components/NavLinks";
+import PlayerSearch from "@/components/PlayerSearch";
 import ServerStatus from "@/components/ServerStatus";
 import { REPO } from "@/lib/release";
 import "./globals.css";
@@ -48,16 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                   <ServerStatus />
                 </Suspense>
               </div>
-              <form action="/classement" method="get" role="search" className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-muted" aria-hidden />
-                <input
-                  type="search"
-                  name="q"
-                  placeholder="Un joueur…"
-                  aria-label="Rechercher un joueur"
-                  className="h-9 w-36 rounded-full border border-line bg-black/30 pl-9 pr-3 text-sm text-ink placeholder:text-ink-muted focus:w-48 focus:border-gold-300 focus:outline-none sm:w-44 sm:focus:w-56 transition-[width]"
-                />
-              </form>
+              <PlayerSearch />
             </div>
           </div>
         </header>

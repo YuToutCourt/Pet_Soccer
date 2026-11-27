@@ -1,7 +1,7 @@
 # [mod] HUD du match : étiquettes des numéros des joueurs 2 à 7 (ModSwitch.UpdateNumbers, voir notes/tactics.md).
 # - ID_NUM_<côté>_<numéro> : au-dessus des têtes (option du menu Mods) ;
 # - ID_MAPNUM_<côté>_<numéro> : à côté des points de la mini-carte.
-# Le texte affiché est numéro - 1 (1 à 6) : le chiffre de la touche directe par défaut (touches 1 à 6),
+# Texte de départ numéro - 1 (1 à 6) ; ModSwitch le remplace par le nom de la touche directe choisie,
 # l'identifiant garde le numéro de l'écran Tactique (2 à 7).
 # Déclarées visibles (sinon Show() ne les dessine pas), cachées par le code au premier affichage.
 # Seules les polices chargées pour la résolution marchent (SoccerFonts.LoadFonts).
@@ -49,11 +49,11 @@ def build(res):
     out = ["   // [mod] numeros des joueurs humains (ModSwitch.UpdateNumbers)"]
     for side in range(2):
         for n in range(2, 8):
-            out += label("ID_NUM_%d_%d" % (side, n), str(n - 1), head_font, 34, "0.04", "0.05")
+            out += label("ID_NUM_%d_%d" % (side, n), str(n - 1), head_font, 34, "0.10", "0.05")
     for side in range(2):
         for n in range(2, 8):
             # aligné à gauche, centré verticalement : posé juste à droite du point
-            out += label("ID_MAPNUM_%d_%d" % (side, n), str(n - 1), map_font, 18, "0.02", "0.03")
+            out += label("ID_MAPNUM_%d_%d" % (side, n), str(n - 1), map_font, 18, "0.06", "0.03")
     anchor = '   Window("UIWindow","ID_ARROW_2","Specific")'
     assert text.count(anchor) == 1, name
     text = text.replace(anchor, CRLF.join(out) + CRLF + anchor)

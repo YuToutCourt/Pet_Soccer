@@ -236,6 +236,18 @@ class Store:
                 player.peak = max(player.peak, player.elo)
         return match_id, deltas
 
+    def record_possession(self, match_id, teams):
+        """Temps de balle détaillé des matchs méta (teams[side] : clés de meta_run.DIAG_KEYS)."""
+        def body(c):
+            for side, t in enumerate(teams):
+                c.execute(
+                    "INSERT INTO match_possession (match_id, side, hold, loose, gk_hold, super_time, spells, spells_dead,"
+                    " play, longest, game_counter) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT (match_id, side) DO NOTHING",
+                    (match_id, side, t["hold"], t["loose"], t["gk_hold"], t["super"], int(t["spells"]),
+                     int(t["spells_dead"]), t["play"], t["longest"], t["game_counter"]))
+        self.db.transaction(body)
+
     def attach_stats(self, match_id, stats):
         """Statistiques arrivées après l'enregistrement du match."""
         self.db.transaction(lambda c: self._write_stats(c, match_id, stats))
@@ -261,7 +273,8 @@ class Store:
                     own_goals[g["number"]] = own_goals.get(g["number"], 0) + 1
             for p in t["players"]:
                 slot = p["slot"]
-                role = roles[slot] if roles and 0 <= slot < len(roles) else None
+                # jeu d'origine (mod v13) : défenseur ou attaquant du moteur, même si un schéma a été choisi
+                role = p.get("origin_role") or (roles[slot] if roles and 0 <= slot < len(roles) else None)
                 c.execute(
                     "INSERT INTO match_footballers (match_id, side, number, slot, role, goals, own_goals, shots, passes,"
                     " passes_ok, recoveries, distance, avg_depth, avg_lateral)"
@@ -288,6 +301,26 @@ class Store:
             "INSERT INTO server_status (id, updated, online, queued, rooms, live_matches) VALUES (1, now(), %s, %s, %s, %s)"
             " ON CONFLICT (id) DO UPDATE SET updated = now(), online = EXCLUDED.online, queued = EXCLUDED.queued,"
             " rooms = EXCLUDED.rooms, live_matches = EXCLUDED.live_matches", (online, queued, rooms, live))
+
+    _LIVE_COLUMNS = ("kind", "started_at", "host_id", "host_name", "host_animal", "host_elo", "guest_id", "guest_name",
+                     "guest_animal", "guest_elo", "score_host", "score_guest", "minute", "half", "half_seconds", "stadium",
+                     "spectators", "stats", "ended", "outcome", "match_id")
+
+    def write_live(self, rows):
+        """Remplace live_matches par ces lignes (rooms.Lobby.live_rows)."""
+        def body(c):
+            c.execute("DELETE FROM live_matches WHERE NOT (key = ANY(%s))", ([r["key"] for r in rows],))
+            for r in rows:
+                values = dict(r, started_at=r["started"], match_id=r["match_db"],
+                              stats=json.dumps(r["stats"]) if r["stats"] is not None else None)
+                cols = ", ".join(self._LIVE_COLUMNS)
+                marks = ", ".join("to_timestamp(%s)" if k == "started_at" else ("%s::jsonb" if k == "stats" else "%s")
+                                  for k in self._LIVE_COLUMNS)
+                updates = ", ".join("%s = EXCLUDED.%s" % (k, k) for k in self._LIVE_COLUMNS)
+                c.execute("INSERT INTO live_matches (key, updated, %s) VALUES (%%s, now(), %s)"
+                          " ON CONFLICT (key) DO UPDATE SET updated = now(), %s" % (cols, marks, updates),
+                          [r["key"]] + [values[k] for k in self._LIVE_COLUMNS])
+        self.db.transaction(body)
 
     # --- classement : les joueurs qui ont au moins un match classé ---
 

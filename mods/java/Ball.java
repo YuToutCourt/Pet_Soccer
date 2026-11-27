@@ -467,7 +467,7 @@ public class Ball extends FieldObject {
    public void TimerSetSpeedUp(float f) {
       ModNet.OnSpeedUp(f); // [mod] en ligne
       this.m_fSpeedup = f;
-      this.GetModule().TimerSetSpeedUp(f);
+      this.GetModule().TimerSetSpeedUp(ModMeta.Speed(f)); // [mod] méta : temps accéléré
       if (f < 1.0F) {
          this.m_bSloMo = true;
       } else {
