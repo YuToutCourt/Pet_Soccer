@@ -17,3 +17,7 @@ Fix la résolution, fenêtrer sans bord
 Revoir l'élo range, mettre plus de rank (genre bois 2 bois 1, bronze 2 bronze 1 etc)
 
 C'est pas normal que de 0 à 600 on est bois puis après c'est tout les 200 élo on change de rang
+
+Revoir la page principale trop de bouton (bouton multi ne sert à rien autant mettre "En ligne")
+
+Rajouter un bouton discord (via logo) et site web

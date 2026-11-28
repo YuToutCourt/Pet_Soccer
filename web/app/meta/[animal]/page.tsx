@@ -8,7 +8,7 @@ import BarList from "@/components/BarList";
 import ResultDonut from "@/components/charts/ResultDonut";
 import { GoalMap, HeatPitch, ZoneTable } from "@/components/Pitch";
 import { Empty, KindTabs, MatchLine, PageSkeleton, SectionTitle, StatTile, TeamLogo, TeamTag } from "@/components/ui";
-import { footballerName, nowSec, parseKind, pct, ROLES, SCHEMES, score, SUPERS, team, TEAMS } from "@/lib/game";
+import { footballerName, nowSec, parseKind, pct, ROLES, SCHEMES, score, SUPERS, team, TEAM_STAT_LABELS, TEAM_STATS, TEAMS } from "@/lib/game";
 import { getTeamMeta, type PossessionDiag, SHOT_D, SHOT_L } from "@/lib/queries";
 
 export async function generateMetadata({ params }: PageProps<"/meta/[animal]">): Promise<Metadata> {
@@ -256,10 +256,40 @@ function Header({ animal, back, children }: { animal: number; back: string; chil
         <div className="min-w-0 flex-1">
           <Link href={back} className="text-sm font-bold text-ink-muted hover:text-gold-300">← Méta</Link>
           <h1 className="title-game truncate text-4xl sm:text-5xl">{t.name}</h1>
+          <TeamStatsRow animal={animal} color={t.color} />
           {children}
         </div>
       </div>
     </section>
+  );
+}
+
+const STAT_HINTS = ["Puissance et portée des tirs", "Écart des tirs", "Vitesse des joueurs"];
+const STAT_MIN = 70;
+const STAT_MAX = 120;
+
+// Force / Précision / Réflexe de l'équipe (team_stats.scr), 90 = neutre
+function TeamStatsRow({ animal, color }: { animal: number; color: string }) {
+  const stats = TEAM_STATS[animal];
+  if (!stats) return null;
+  return (
+    <dl className="mt-3 grid max-w-md grid-cols-3 gap-x-4 text-sm">
+      {TEAM_STAT_LABELS.map((label, i) => {
+        const v = stats[i];
+        const w = ((Math.min(STAT_MAX, Math.max(STAT_MIN, v)) - STAT_MIN) / (STAT_MAX - STAT_MIN)) * 100;
+        return (
+          <div key={label} title={`${STAT_HINTS[i]} (90 = neutre)`}>
+            <div className="flex items-baseline justify-between gap-2">
+              <dt className="text-ink-muted">{label}</dt>
+              <dd className="font-extrabold tabular text-ink">{v}</dd>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/30">
+              <div className="h-full rounded-full" style={{ width: `${w}%`, background: color }} />
+            </div>
+          </div>
+        );
+      })}
+    </dl>
   );
 }
 

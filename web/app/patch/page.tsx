@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { ArrowDown, ArrowUp, Crosshair, Equal, Hand, Maximize2, Shield, Swords, Target, Timer, TrendingUp, Trophy, Zap } from "lucide-react";
 import { SectionTitle, TeamLogo } from "@/components/ui";
-import { team } from "@/lib/game";
+import { team, TEAM_STATS } from "@/lib/game";
 
 export const metadata: Metadata = {
   title: "Notes de patch",
@@ -96,10 +96,7 @@ const S3_RANK = Object.entries(S3_PPM)
   .reduce<Record<number, number>>((acc, [a, v], i, arr) => ({ ...acc, [Number(a)]: arr.findIndex((x) => x[1] === v) + 1 }), {});
 
 /** Stats en vigueur (team_stats.scr) : Force, Précision, Réflexe. */
-const CURRENT: Record<number, Stats> = {
-  0: [95, 95, 90], 1: [105, 85, 82], 2: [80, 90, 100], 3: [100, 84, 83], 4: [86, 86, 100], 5: [90, 88, 80], 6: [95, 85, 85],
-  7: [100, 105, 82], 8: [88, 100, 93], 9: [105, 92, 92], 10: [100, 108, 88], 11: [84, 106, 97], 12: [105, 89, 90], 13: [95, 85, 95],
-};
+const CURRENT: Record<number, Stats> = TEAM_STATS;
 
 /** Retouches faites après la série 3 : la tier list (mesurée avant) devrait bouger dans ce sens. */
 const AFTER_S3: Record<number, 1 | -1> = { 3: -1, 5: -1, 8: 1, 9: 1, 10: 1, 11: 1, 12: 1 };

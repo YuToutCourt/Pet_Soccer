@@ -24,7 +24,15 @@ export const TEAMS: Record<number, Team> = {
   13: { name: "Borussia Tigermund", emoji: "🐯", color: "#F39C12", logo: "T_Logo_Tigermund.png" },
 };
 
-const UNKNOWN_TEAM: Team = { name: "?", emoji: "❓", color: "#555", logo: "" };
+/** Stats en vigueur (mods/data/Data/team_stats.scr) : Force, Précision, Réflexe. 90 = neutre. */
+export type TeamStats = [number, number, number];
+export const TEAM_STATS: Record<number, TeamStats> = {
+  0: [95, 95, 90], 1: [105, 85, 82], 2: [80, 90, 100], 3: [100, 84, 83], 4: [86, 86, 100], 5: [90, 88, 80], 6: [95, 85, 85],
+  7: [100, 105, 82], 8: [88, 100, 93], 9: [105, 92, 92], 10: [100, 108, 88], 11: [84, 106, 97], 12: [105, 89, 90], 13: [95, 85, 95],
+};
+export const TEAM_STAT_LABELS = ["Force", "Précision", "Réflexe"] as const;
+
+const UNKNOWN_TEAM: Team ={ name: "?", emoji: "❓", color: "#555", logo: "" };
 
 export function team(idx: number | null | undefined): Team {
   if (idx == null) return UNKNOWN_TEAM;
